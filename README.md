@@ -24,129 +24,39 @@ FairRoute is an intelligent parametric insurance platform designed to protect gi
 
 ## 1. Problem & Worker Statistics
 
-### The Core Problem
+### The Problem
 
-India's gig economy is expanding rapidly, with millions of delivery partners powering urban commerce and digital logistics. However, these workers face significant financial vulnerability due to:
+India has **7.7 million gig workers**, with delivery partners facing significant financial vulnerability:
 
-- Unpredictable earning patterns governed by algorithmic scheduling
-- Fluctuating demand and performance-based incentives
-- Zero compensation for lost working hours during external disruptions
-- Limited access to traditional financial protection mechanisms
+- **Zero compensation** for lost hours during weather disruptions, platform issues, or low demand
+- **Unpredictable earnings** governed by opaque algorithmic scheduling
+- **No traditional insurance** covers short-timeframe income loss
 
-**FairRoute addresses the critical gap of income protection for gig workers during verified external disruptions.**
-
-### Worker Statistics: Swiggy Delivery Partners
+### Key Statistics: Delivery Partners
 
 | Metric | Value |
 |--------|-------|
 | Daily Working Hours | 8–10 hours |
-| Monthly Working Days | ~26 days |
-| Peak Delivery Window | 7 PM – 10 PM |
+| Monthly Earnings (Full-time) | ₹21,000 net |
+| Per-Order Payment | ₹15 – ₹90 |
+| Peak Hours | 7 PM – 10 PM |
 
-#### Earnings Overview
+### Income Disruption Triggers
 
-| Worker Type | Gross Monthly | Net Monthly (after expenses) |
-|-------------|---------------|------------------------------|
-| Full-Time Partners | ₹26,500 – ₹27,700 | ~₹21,000 |
-| Part-Time Partners | ₹7,200 – ₹25,000 | Varies |
+| Trigger | Impact |
+|---------|--------|
+| Heavy Rainfall / Flooding | Orders drop 40-60%, unsafe conditions |
+| Heatwaves (>42°C) | Reduced platform activity |
+| Platform Demand Drops | No orders despite being online |
+| Zone Restrictions / Curfews | Unable to access delivery areas |
 
-| Per-Order Metrics | Value |
-|-------------------|-------|
-| Delivery Payment | ₹15 – ₹90 per order |
-| Daily Deliveries Required | 10 – 25 (for incentive eligibility) |
+### Why Current Solutions Fail
 
-### Work Pattern Risks
+- **Platform benefits** require active deliveries and high ratings
+- **Government schemes** have 90-120 day eligibility periods and low awareness
+- **Traditional insurance** doesn't cover income loss from external disruptions
 
-**Peak Hour Challenges (7 PM – 10 PM):**
-- Delivery volumes spike significantly
-- Traffic congestion increases
-- Riders face pressure to complete more deliveries to qualify for incentives
-
-**Associated Risks:**
-- Fatigue from extended working hours
-- Increased operational stress during peak demand
-- Exposure to unsafe delivery conditions at night
-
-**Night Delivery Hazards:**
-- Poorly lit delivery areas
-- Fake orders or unsafe customer locations
-- Reduced emergency support availability
-
-### Environmental & Operational Disruptions
-
-| Condition | Impact |
-|-----------|--------|
-| Heatwaves | Increased delivery time, health risks |
-| Heavy Monsoon Rainfall | Reduced order availability, safety hazards |
-| High Humidity | Physical exhaustion, slower deliveries |
-| Urban Flooding | Platform demand drops, inaccessible routes |
-
-**Key Problem:** Despite these disruptions, gig workers do not receive compensation for lost working hours.
-
-### Income Volatility Factors
-
-- Order volume fluctuations
-- Time of day variations
-- Incentive eligibility requirements
-- Delivery distance changes
-- Dynamic pricing incentive adjustments
-
-### Platform Coverage Shortcomings
-
-**Conditional Benefits:** Platform protections often only apply when workers are:
-- Actively completing deliveries
-- Maintaining high performance ratings
-- Meeting minimum delivery thresholds
-
-**Government Scheme Limitations:**
-
-| Requirement | Challenge |
-|-------------|-----------|
-| Eligibility Period | 90–120 days of platform engagement |
-| Awareness | Limited among gig workers |
-| Registration (e-Shram) | Relatively low adoption rates |
-
-### Algorithmic Work Allocation Issues
-
-The algorithmic decision-making process is largely **opaque**—workers have limited visibility into how order allocation decisions are made.
-
-**Algorithm Evaluation Factors:**
-- Delivery partner rating
-- Order acceptance rate
-- Cancellation history
-- Delivery location
-- Past performance metrics
-
-**Reported Issues:**
-- Uneven order distribution across workers in the same location
-- Workers with lower ratings receive fewer and lower-paying orders
-- Reduced access to peak-time deliveries for some partners
-
-### Account Deactivation Risks
-
-| Cause | Description |
-|-------|-------------|
-| High Cancellation Rates | Exceeding platform thresholds |
-| Low Customer Ratings | Below acceptable performance levels |
-| Policy Violations | Breaching platform terms |
-| Algorithmic Flags | Automated monitoring triggers |
-
-**Impact:** Workers report deactivation occurs without prior warning, clear explanation, or transparent appeal mechanism—causing immediate financial distress.
-
-### The Protection Gap
-
-| Event Type | Description |
-|------------|-------------|
-| Low Demand Periods | Insufficient orders despite availability |
-| Extreme Weather | Rain, heat, or flooding reducing deliveries |
-| Platform Allocation | Algorithmic slowdowns or zone restrictions |
-| Shift Inactivity | Worker available but no orders received |
-
-**Why Traditional Insurance Fails:**
-- Focuses on health, life, accidents, or asset damage
-- Requires manual claim submissions
-- Operates on monthly or yearly coverage cycles
-- Does not address short-timeframe income disruptions
+**FairRoute fills this gap with automated, parametric income protection.**
 
 ---
 
@@ -495,22 +405,6 @@ FairRoute uses a **weekly micro-premium model** designed specifically for gig wo
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Detailed Pricing Breakdown
-
-| Feature | Basic Shield | Standard Shield | Premium Shield |
-|---------|--------------|-----------------|----------------|
-| **Weekly Premium** | ₹29 | ₹49 | ₹79 |
-| **Monthly Equivalent** | ~₹116 | ~₹196 | ~₹316 |
-| **Daily Payout Cap** | ₹500 | ₹800 | ₹1,200 |
-| **Weekly Payout Cap** | ₹2,000 | ₹3,500 | ₹6,000 |
-| **Hourly Rate** | ₹75/hour | ₹100/hour | ₹150/hour |
-| **Weather Coverage** | ✅ | ✅ | ✅ |
-| **Zone Shutdown** | ✅ | ✅ | ✅ |
-| **Demand Drop Coverage** | ❌ | ✅ | ✅ |
-| **Heat Alert Coverage** | ❌ | ❌ | ✅ |
-| **Platform Outage** | ❌ | ❌ | ✅ |
-| **Priority Support** | ❌ | ✅ | ✅ |
-
 ### Payout Calculation Formula
 
 ```
@@ -570,64 +464,9 @@ Daily Cap: ₹1,200
 Final Payout: ₹1,200 (capped) ✓
 ```
 
-### Premium Payment Options
-
-| Method | Description |
-|--------|-------------|
-| UPI Auto-Deduct | Weekly auto-deduction from linked UPI |
-| Wallet Deduction | Deduct from FairRoute wallet balance |
-| Manual Payment | Pay each week manually via UPI/card |
-| Prepaid Balance | Pre-load 4-12 weeks of premiums |
-
-### Value Proposition
-
-**For a Standard Shield subscriber (₹49/week):**
-
-| Scenario | Premium Paid | Potential Payout | ROI |
-|----------|--------------|------------------|-----|
-| 1 monsoon event/month | ₹196/month | ₹800+ per event | 4x+ |
-| 2 weather events/month | ₹196/month | ₹1,600+ total | 8x+ |
-| No events (3 months) | ₹588 | ₹0 | Peace of mind |
-
 ---
 
 ## 5. Parametric Triggers
-
-### What are Parametric Triggers?
-
-Parametric triggers are **objective, data-driven conditions** that automatically activate insurance payouts without manual claims or subjective assessments.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                  PARAMETRIC vs TRADITIONAL                      │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  TRADITIONAL INSURANCE          PARAMETRIC INSURANCE            │
-│  ─────────────────────          ────────────────────            │
-│                                                                 │
-│  Event occurs                   Event occurs                    │
-│       │                              │                          │
-│       ▼                              ▼                          │
-│  Worker files claim             Sensor detects trigger          │
-│       │                              │                          │
-│       ▼                              ▼                          │
-│  Submit documents               Auto-validate via data          │
-│       │                              │                          │
-│       ▼                              ▼                          │
-│  Manual review                  Algorithm confirms              │
-│       │                              │                          │
-│       ▼                              ▼                          │
-│  Approval/Rejection             Instant payout                  │
-│       │                              │                          │
-│       ▼                              │                          │
-│  Payout (15-30 days)                 │                          │
-│       │                              │                          │
-│       ▼                              ▼                          │
-│  ────────────────               ─────────────                   │
-│  Timeline: 2-4 weeks            Timeline: 2 hours               │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
 
 ### FairRoute Trigger Categories
 
@@ -1012,111 +851,6 @@ def detect_anomaly(zone_data):
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Detailed Tech Stack
-
-#### Frontend
-
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| Mobile App | React Native | Cross-platform iOS/Android app |
-| Web Portal | React.js + TypeScript | Admin dashboard and worker portal |
-| UI Framework | Tailwind CSS / Material UI | Consistent design system |
-| State Management | Redux Toolkit | Application state |
-| API Client | Axios + React Query | API communication |
-
-#### Backend Services
-
-| Service | Technology | Purpose |
-|---------|------------|---------|
-| User Service | Node.js + Express | Authentication, profiles, KYC |
-| Policy Service | Node.js + Express | Coverage management, premiums |
-| Trigger Service | Python + FastAPI | Event detection, validation |
-| Payout Service | Node.js + Express | Payment processing |
-| AI Engine | Python + TensorFlow | ML models, predictions |
-| Weather Service | Python + FastAPI | Weather data aggregation |
-| Notification Service | Node.js + Express | SMS, push, email |
-
-#### Data Infrastructure
-
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| Primary Database | PostgreSQL 15 | Transactional data |
-| Cache Layer | Redis 7 | Session, rate limiting |
-| Document Store | MongoDB | Logs, events, analytics |
-| Search Engine | Elasticsearch | Full-text search |
-| Message Queue | Redis Streams / Kafka | Event streaming |
-| Object Storage | AWS S3 | Documents, backups |
-
-#### AI/ML Stack
-
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| ML Framework | TensorFlow / PyTorch | Model training |
-| Model Serving | TensorFlow Serving | Production inference |
-| Feature Store | Feast | Feature management |
-| Experiment Tracking | MLflow | Model versioning |
-| NLP | Hugging Face Transformers | Language processing |
-
-#### DevOps & Infrastructure
-
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| Container Orchestration | Kubernetes (EKS/GKE) | Service deployment |
-| CI/CD | GitHub Actions | Automated pipelines |
-| Infrastructure as Code | Terraform | Cloud provisioning |
-| Monitoring | Prometheus + Grafana | Metrics & dashboards |
-| Logging | ELK Stack | Centralized logging |
-| APM | Datadog / New Relic | Performance monitoring |
-
-#### External Integrations
-
-| Integration | Provider | Purpose |
-|-------------|----------|---------|
-| Weather Data | IMD API, OpenWeather | Trigger detection |
-| Payments | Razorpay / PayU | Premium collection, payouts |
-| KYC | DigiLocker, UIDAI | Identity verification |
-| SMS | Twilio / MSG91 | Notifications |
-| Maps | Google Maps API | Location services |
-| Platform Data | Swiggy/Zomato APIs | Work data sync |
-
-### Security Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    SECURITY LAYERS                              │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  TRANSPORT SECURITY                                             │
-│  ├─ TLS 1.3 encryption                                          │
-│  ├─ Certificate pinning (mobile)                                │
-│  └─ HSTS headers                                                │
-│                                                                 │
-│  AUTHENTICATION                                                 │
-│  ├─ JWT tokens with short expiry                                │
-│  ├─ Refresh token rotation                                      │
-│  ├─ OTP-based login                                             │
-│  └─ Biometric support (mobile)                                  │
-│                                                                 │
-│  AUTHORIZATION                                                  │
-│  ├─ Role-based access control (RBAC)                            │
-│  ├─ API key management for partners                             │
-│  └─ Scope-limited tokens                                        │
-│                                                                 │
-│  DATA PROTECTION                                                │
-│  ├─ AES-256 encryption at rest                                  │
-│  ├─ PII masking in logs                                         │
-│  ├─ Database-level encryption                                   │
-│  └─ GDPR/DPDP compliance                                        │
-│                                                                 │
-│  INFRASTRUCTURE                                                 │
-│  ├─ VPC isolation                                               │
-│  ├─ WAF protection                                              │
-│  ├─ DDoS mitigation                                             │
-│  └─ Regular security audits                                     │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
 ---
 
 ## 8. Database Schema
@@ -1152,348 +886,16 @@ def detect_anomaly(zone_data):
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Core Tables
+### Database
 
-#### Workers Table
+**PostgreSQL**
 
-```sql
-CREATE TABLE workers (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    phone           VARCHAR(15) UNIQUE NOT NULL,
-    email           VARCHAR(255),
-    full_name       VARCHAR(255) NOT NULL,
-    aadhaar_hash    VARCHAR(64),           -- Hashed for privacy
-    pan_hash        VARCHAR(64),
-    
-    -- Platform Details
-    platform        VARCHAR(50) NOT NULL,   -- 'swiggy', 'zomato', etc.
-    platform_id     VARCHAR(100),
-    
-    -- Bank Details (encrypted)
-    bank_account_encrypted  BYTEA,
-    upi_id_encrypted        BYTEA,
-    
-    -- Profile
-    profile_photo_url   VARCHAR(500),
-    primary_zone_id     UUID REFERENCES zones(id),
-    
-    -- Status
-    kyc_status          VARCHAR(20) DEFAULT 'pending',
-    account_status      VARCHAR(20) DEFAULT 'active',
-    
-    -- Timestamps
-    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_active_at      TIMESTAMP,
-    
-    -- Indexes
-    CONSTRAINT valid_platform CHECK (platform IN ('swiggy', 'zomato', 'dunzo', 'zepto', 'other'))
-);
-
-CREATE INDEX idx_workers_phone ON workers(phone);
-CREATE INDEX idx_workers_platform ON workers(platform);
-CREATE INDEX idx_workers_zone ON workers(primary_zone_id);
-```
-
-#### Plans Table
-
-```sql
-CREATE TABLE plans (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name            VARCHAR(100) NOT NULL,
-    slug            VARCHAR(50) UNIQUE NOT NULL,
-    
-    -- Pricing
-    weekly_premium      DECIMAL(10, 2) NOT NULL,
-    daily_payout_cap    DECIMAL(10, 2) NOT NULL,
-    weekly_payout_cap   DECIMAL(10, 2) NOT NULL,
-    hourly_rate         DECIMAL(10, 2) NOT NULL,
-    
-    -- Coverage
-    weather_coverage        BOOLEAN DEFAULT true,
-    zone_shutdown_coverage  BOOLEAN DEFAULT true,
-    demand_drop_coverage    BOOLEAN DEFAULT false,
-    heat_alert_coverage     BOOLEAN DEFAULT false,
-    platform_outage_coverage BOOLEAN DEFAULT false,
-    
-    -- Status
-    is_active           BOOLEAN DEFAULT true,
-    display_order       INTEGER DEFAULT 0,
-    
-    -- Timestamps
-    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Seed default plans
-INSERT INTO plans (name, slug, weekly_premium, daily_payout_cap, weekly_payout_cap, hourly_rate, 
-                   weather_coverage, zone_shutdown_coverage, demand_drop_coverage, 
-                   heat_alert_coverage, platform_outage_coverage, display_order) 
-VALUES 
-    ('Basic Shield', 'basic', 29.00, 500.00, 2000.00, 75.00, true, true, false, false, false, 1),
-    ('Standard Shield', 'standard', 49.00, 800.00, 3500.00, 100.00, true, true, true, false, false, 2),
-    ('Premium Shield', 'premium', 79.00, 1200.00, 6000.00, 150.00, true, true, true, true, true, 3);
-```
-
-#### Policies Table
-
-```sql
-CREATE TABLE policies (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    worker_id       UUID NOT NULL REFERENCES workers(id),
-    plan_id         UUID NOT NULL REFERENCES plans(id),
-    
-    -- Policy Period
-    start_date      DATE NOT NULL,
-    end_date        DATE,                   -- NULL for ongoing
-    
-    -- Status
-    status          VARCHAR(20) DEFAULT 'active',
-    auto_renew      BOOLEAN DEFAULT true,
-    
-    -- Payment
-    last_premium_date   DATE,
-    next_premium_date   DATE,
-    payment_method      VARCHAR(20),
-    
-    -- Counters
-    total_premiums_paid     DECIMAL(12, 2) DEFAULT 0,
-    total_payouts_received  DECIMAL(12, 2) DEFAULT 0,
-    
-    -- Timestamps
-    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    cancelled_at        TIMESTAMP,
-    
-    CONSTRAINT valid_status CHECK (status IN ('active', 'paused', 'cancelled', 'expired'))
-);
-
-CREATE INDEX idx_policies_worker ON policies(worker_id);
-CREATE INDEX idx_policies_status ON policies(status);
-```
-
-#### Triggers Table
-
-```sql
-CREATE TABLE triggers (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    
-    -- Trigger Details
-    trigger_type    VARCHAR(50) NOT NULL,
-    trigger_subtype VARCHAR(50),
-    
-    -- Geographic Scope
-    zone_ids        UUID[] NOT NULL,        -- Array of affected zones
-    
-    -- Thresholds
-    threshold_value     DECIMAL(10, 2),
-    measured_value      DECIMAL(10, 2),
-    severity            VARCHAR(20),
-    severity_multiplier DECIMAL(3, 2) DEFAULT 1.0,
-    
-    -- Timing
-    started_at          TIMESTAMP NOT NULL,
-    ended_at            TIMESTAMP,
-    duration_minutes    INTEGER,
-    
-    -- Validation
-    data_sources        JSONB,              -- Sources used for validation
-    validation_score    DECIMAL(5, 2),      -- Confidence score 0-100
-    
-    -- Status
-    status              VARCHAR(20) DEFAULT 'active',
-    
-    -- Timestamps
-    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    CONSTRAINT valid_trigger_type CHECK (trigger_type IN (
-        'weather_rainfall', 'weather_heat', 'weather_flood',
-        'demand_drop', 'zone_shutdown', 'platform_outage', 'government_restriction'
-    )),
-    CONSTRAINT valid_severity CHECK (severity IN ('low', 'moderate', 'severe'))
-);
-
-CREATE INDEX idx_triggers_type ON triggers(trigger_type);
-CREATE INDEX idx_triggers_status ON triggers(status);
-CREATE INDEX idx_triggers_started ON triggers(started_at);
-```
-
-#### Payouts Table
-
-```sql
-CREATE TABLE payouts (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    policy_id       UUID NOT NULL REFERENCES policies(id),
-    trigger_id      UUID NOT NULL REFERENCES triggers(id),
-    
-    -- Calculation
-    lost_hours          DECIMAL(4, 2) NOT NULL,
-    hourly_rate         DECIMAL(10, 2) NOT NULL,
-    severity_multiplier DECIMAL(3, 2) NOT NULL,
-    calculated_amount   DECIMAL(10, 2) NOT NULL,
-    cap_applied         DECIMAL(10, 2),
-    final_amount        DECIMAL(10, 2) NOT NULL,
-    
-    -- Payment Details
-    payment_method      VARCHAR(20),
-    payment_reference   VARCHAR(100),
-    
-    -- Status
-    status              VARCHAR(20) DEFAULT 'pending',
-    
-    -- Timestamps
-    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    processed_at        TIMESTAMP,
-    failed_at           TIMESTAMP,
-    failure_reason      TEXT,
-    
-    CONSTRAINT valid_payout_status CHECK (status IN ('pending', 'processing', 'completed', 'failed'))
-);
-
-CREATE INDEX idx_payouts_policy ON payouts(policy_id);
-CREATE INDEX idx_payouts_trigger ON payouts(trigger_id);
-CREATE INDEX idx_payouts_status ON payouts(status);
-```
-
-#### Zones Table
-
-```sql
-CREATE TABLE zones (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    
-    -- Zone Identity
-    name            VARCHAR(100) NOT NULL,
-    city            VARCHAR(100) NOT NULL,
-    state           VARCHAR(100) NOT NULL,
-    pincode         VARCHAR(10),
-    
-    -- Geographic
-    latitude        DECIMAL(10, 8),
-    longitude       DECIMAL(11, 8),
-    boundary_geojson    JSONB,              -- GeoJSON polygon
-    
-    -- Risk Profile
-    weather_risk_score  INTEGER DEFAULT 50, -- 0-100
-    demand_volatility   DECIMAL(5, 2),
-    
-    -- Status
-    is_active           BOOLEAN DEFAULT true,
-    
-    -- Timestamps
-    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_zones_city ON zones(city);
-CREATE INDEX idx_zones_active ON zones(is_active);
-```
-
-#### Weather Data Table
-
-```sql
-CREATE TABLE weather_data (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    zone_id         UUID NOT NULL REFERENCES zones(id),
-    
-    -- Weather Metrics
-    temperature         DECIMAL(5, 2),      -- Celsius
-    humidity            INTEGER,            -- Percentage
-    rainfall_mm         DECIMAL(8, 2),
-    wind_speed_kmh      DECIMAL(6, 2),
-    visibility_km       DECIMAL(6, 2),
-    air_quality_index   INTEGER,
-    
-    -- Conditions
-    condition_code      VARCHAR(50),
-    condition_text      VARCHAR(100),
-    
-    -- Source
-    data_source         VARCHAR(50),
-    
-    -- Timestamp
-    recorded_at         TIMESTAMP NOT NULL,
-    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Composite unique constraint
-    UNIQUE(zone_id, recorded_at, data_source)
-);
-
-CREATE INDEX idx_weather_zone_time ON weather_data(zone_id, recorded_at);
-```
-
-#### Work Logs Table
-
-```sql
-CREATE TABLE work_logs (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    worker_id       UUID NOT NULL REFERENCES workers(id),
-    
-    -- Session Details
-    session_date        DATE NOT NULL,
-    login_time          TIMESTAMP NOT NULL,
-    logout_time         TIMESTAMP,
-    
-    -- Location
-    zone_id             UUID REFERENCES zones(id),
-    
-    -- Activity Metrics
-    active_hours        DECIMAL(4, 2),
-    idle_hours          DECIMAL(4, 2),
-    deliveries_completed INTEGER DEFAULT 0,
-    estimated_earnings  DECIMAL(10, 2),
-    
-    -- Source
-    data_source         VARCHAR(50),        -- 'platform_sync', 'manual', 'estimated'
-    
-    -- Timestamps
-    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_work_logs_worker ON work_logs(worker_id);
-CREATE INDEX idx_work_logs_date ON work_logs(session_date);
-```
-
-### Database Views
-
-```sql
--- Active policies with plan details
-CREATE VIEW v_active_policies AS
-SELECT 
-    p.id AS policy_id,
-    p.worker_id,
-    w.full_name AS worker_name,
-    w.phone AS worker_phone,
-    pl.name AS plan_name,
-    pl.weekly_premium,
-    pl.daily_payout_cap,
-    p.start_date,
-    p.total_premiums_paid,
-    p.total_payouts_received
-FROM policies p
-JOIN workers w ON p.worker_id = w.id
-JOIN plans pl ON p.plan_id = pl.id
-WHERE p.status = 'active';
-
--- Trigger summary by zone
-CREATE VIEW v_zone_trigger_summary AS
-SELECT 
-    z.id AS zone_id,
-    z.name AS zone_name,
-    z.city,
-    COUNT(t.id) AS total_triggers_30d,
-    SUM(CASE WHEN t.trigger_type LIKE 'weather%' THEN 1 ELSE 0 END) AS weather_triggers,
-    SUM(CASE WHEN t.trigger_type = 'demand_drop' THEN 1 ELSE 0 END) AS demand_triggers,
-    AVG(t.duration_minutes) AS avg_duration_minutes
-FROM zones z
-LEFT JOIN LATERAL unnest(
-    (SELECT array_agg(tr.id) FROM triggers tr WHERE z.id = ANY(tr.zone_ids) 
-     AND tr.started_at > NOW() - INTERVAL '30 days')
-) AS trigger_id ON true
-LEFT JOIN triggers t ON t.id = trigger_id
-GROUP BY z.id, z.name, z.city;
-```
+**Key Tables:**
+- Users
+- Policies
+- Triggers
+- Claims
+- Payouts
 
 ---
 
