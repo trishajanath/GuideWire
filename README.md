@@ -16,7 +16,7 @@ FairRoute is an intelligent parametric insurance platform designed to protect gi
 6. [AI Integration](#6-ai-integration)
 7. [Tech Stack](#7-tech-stack)
 8. [Database Schema](#8-database-schema)
-9. [Market Size](#9-market-size)
+9. [Development Roadmap](#9-development-roadmap)
 10. [Wireframes](#10-wireframes)
 11. [Sources](#sources)
 
@@ -899,131 +899,36 @@ def detect_anomaly(zone_data):
 
 ---
 
-## 9. Market Size
+## 9. Development Roadmap
 
-### India's Gig Economy Overview
+### Phase 1: Ideation & Foundation
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     INDIA GIG ECONOMY MARKET SIZE                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  CURRENT STATE (2024-2025)                                                  │
-│  ─────────────────────────                                                  │
-│                                                                             │
-│  Total Gig Workers:          7.7 million                                    │
-│  Platform-based Workers:     3.0+ million                                   │
-│  Delivery Partners:          1.5+ million                                   │
-│                                                                             │
-│  PROJECTED GROWTH (2030)                                                    │
-│  ───────────────────────                                                    │
-│                                                                             │
-│  Total Gig Workers:          23.5 million                                   │
-│  Platform-based Workers:     10+ million                                    │
-│  Delivery Partners:          4+ million                                     │
-│                                                                             │
-│  CAGR: 17-20%                                                               │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+**Tasks:**
+- Research gig worker challenges
+- Define insurance model
+- Design system architecture
+- Create prototype wireframes
 
-### Total Addressable Market (TAM)
+**Deliverables:**
+- README documentation
+- Architecture diagram
+- Concept video
 
-| Segment | Workers (2025) | Workers (2030) | Avg. Monthly Premium | Annual TAM (2030) |
-|---------|----------------|----------------|----------------------|-------------------|
-| Delivery (Food/Grocery) | 1.5M | 4M | ₹200 | ₹9,600 Cr |
-| Ride-hailing | 2M | 5M | ₹200 | ₹12,000 Cr |
-| E-commerce Logistics | 0.5M | 1.5M | ₹200 | ₹3,600 Cr |
-| Other Platform Workers | 0.5M | 2M | ₹150 | ₹3,600 Cr |
-| **Total** | **4.5M** | **12.5M** | - | **₹28,800 Cr** |
+### Phase 2: Automation & Protection
 
-### Serviceable Addressable Market (SAM)
+**Implementation:**
+- Worker registration system
+- Policy creation
+- Premium calculation engine
+- Disruption trigger detection
+- Claims automation
 
-**Focus: Food & Grocery Delivery Partners**
+### Phase 3: Scale & Optimization
 
-| Platform | Estimated Partners | Market Share |
-|----------|-------------------|--------------|
-| Swiggy | 350,000+ | 35% |
-| Zomato | 350,000+ | 35% |
-| Zepto | 50,000+ | 5% |
-| Blinkit | 50,000+ | 5% |
-| Dunzo | 30,000+ | 3% |
-| Others | 170,000+ | 17% |
-| **Total** | **1,000,000+** | **100%** |
-
-**SAM Calculation:**
-
-| Metric | Value |
-|--------|-------|
-| Target Delivery Workers | 1,000,000 |
-| Average Weekly Premium | ₹49 |
-| Annual Premium per Worker | ₹2,548 |
-| **Annual SAM** | **₹2,548 Cr** |
-
-### Serviceable Obtainable Market (SOM)
-
-**Year 1-3 Targets:**
-
-| Year | Target Users | Penetration | Annual Revenue |
-|------|--------------|-------------|----------------|
-| Year 1 | 50,000 | 5% | ₹12.7 Cr |
-| Year 2 | 150,000 | 15% | ₹38.2 Cr |
-| Year 3 | 300,000 | 30% | ₹76.4 Cr |
-
-### Market Drivers
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    GROWTH DRIVERS                               │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  1. GIG ECONOMY EXPANSION                                       │
-│     ├─ Food delivery market growing at 25-30% CAGR              │
-│     ├─ Quick commerce creating new delivery demand              │
-│     └─ Tier 2/3 city expansion                                  │
-│                                                                 │
-│  2. REGULATORY TAILWINDS                                        │
-│     ├─ Social Security Code 2020 for gig workers                │
-│     ├─ State-level gig worker welfare bills                     │
-│     └─ IRDAI sandbox for parametric insurance                   │
-│                                                                 │
-│  3. AWARENESS & DEMAND                                          │
-│     ├─ Increasing worker awareness of income risks              │
-│     ├─ Platform-level discussions on worker welfare             │
-│     └─ Union advocacy for better protections                    │
-│                                                                 │
-│  4. TECHNOLOGY ENABLEMENT                                       │
-│     ├─ UPI enabling micro-transactions                          │
-│     ├─ Smartphone penetration among workers                     │
-│     └─ Real-time data availability                              │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Competitive Landscape
-
-| Category | Players | FairRoute Differentiation |
-|----------|---------|---------------------------|
-| Traditional Insurers | HDFC Ergo, ICICI Lombard | Parametric vs. claim-based |
-| Microinsurance | Toffee, Digit | Gig-specific vs. generic |
-| Platform Benefits | Swiggy Shield | Independent vs. platform-locked |
-| Embedded Insurance | Acko | Income-focused vs. health/accident |
-
-### Unit Economics
-
-**Per User Economics (Standard Shield - ₹49/week):**
-
-| Metric | Value |
-|--------|-------|
-| Annual Premium per User | ₹2,548 |
-| Expected Loss Ratio | 65% |
-| Expected Payouts per User | ₹1,656 |
-| Gross Margin | ₹892 (35%) |
-| CAC (Customer Acquisition) | ₹200 |
-| Servicing Cost | ₹150 |
-| Net Margin per User | ₹542 (21%) |
-| LTV (3-year) | ₹1,626 |
-| LTV:CAC Ratio | 8.1x |
+**Advanced Features:**
+- Fraud detection engine
+- Instant payout simulation
+- Analytics dashboards
 
 ---
 
