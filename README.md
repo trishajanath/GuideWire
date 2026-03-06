@@ -1,8 +1,6 @@
-# FairRoute
+# AI-Powered Parametric Income Protection for Gig Workers
 
-## AI-Powered Parametric Income Protection for Gig Workers
-
-FairRoute is an intelligent parametric insurance platform designed to protect gig economy workers from income disruptions caused by external factors beyond their control. Built specifically for India's growing delivery workforce, FairRoute provides automated, transparent, and affordable financial protection.
+An intelligent parametric insurance platform designed to protect gig economy workers from income disruptions caused by external factors beyond their control. Built specifically for India's growing delivery workforce, providing automated, transparent, and affordable financial protection.
 
 ---
 
@@ -347,18 +345,6 @@ India has **7.7 million gig workers**, with delivery partners facing significant
 └────────────────────────────────────────────────────────────────┘
 ```
 
-### Claim-Free Payout Process
-
-Unlike traditional insurance, FairRoute requires **no manual claims**:
-
-| Traditional Insurance | FairRoute |
-|-----------------------|-----------|
-| Worker files claim | Auto-detected trigger |
-| Submit documentation | No documents needed |
-| Manual verification | AI-powered validation |
-| 15-30 day processing | 2-hour payout |
-| Possible rejection | Objective criteria |
-
 ---
 
 ## 4. Weekly Pricing Model
@@ -536,40 +522,6 @@ Final Payout: ₹1,200 (capped) ✓
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Example Trigger Scenarios
-
-**Scenario: Heavy Rainfall in Mumbai**
-
-```
-TRIGGER EVENT TIMELINE:
-──────────────────────────────────────────────────────────────────
-
-14:00  IMD records rainfall at 35mm/hour in Andheri zone
-       ├─ Primary source: IMD API ✓
-       └─ Threshold: >30mm in 3 hours ✓
-
-14:15  OpenWeather confirms heavy precipitation
-       └─ Secondary source: Weather API ✓
-
-14:30  Swiggy platform data shows:
-       ├─ Order volume: -55% vs. hourly average
-       ├─ Active riders: -40%
-       └─ Platform impact verified ✓
-
-14:45  TRIGGER CONFIRMED
-       ├─ Affected zone: Andheri, Goregaon, Malad
-       ├─ Severity: Moderate (1.2x multiplier)
-       └─ Duration tracking: Started
-
-17:30  Rainfall subsides, trigger ends
-       └─ Total trigger duration: 3 hours
-
-17:35  PAYOUTS INITIATED
-       ├─ Eligible workers: 847
-       ├─ Average payout: ₹360
-       └─ Status: Processing via UPI
-```
-
 ### Trigger Transparency
 
 Workers can view trigger status in real-time:
@@ -652,34 +604,19 @@ FairRoute leverages artificial intelligence across multiple system components:
 
 **Purpose:** Identify unusual patterns that indicate disruption events
 
-```python
-# Simplified Anomaly Detection Logic
+**How It Works:**
 
-def detect_anomaly(zone_data):
-    """
-    Detect order volume anomalies indicating disruption
-    """
-    # Calculate baseline (rolling 7-day average for same hour)
-    baseline = calculate_baseline(zone_data, window=7)
-    
-    # Get current metrics
-    current_volume = zone_data.current_order_volume
-    current_active_riders = zone_data.active_riders
-    
-    # Calculate deviation
-    volume_deviation = (baseline.avg_volume - current_volume) / baseline.avg_volume
-    rider_deviation = (baseline.avg_riders - current_active_riders) / baseline.avg_riders
-    
-    # Anomaly thresholds
-    if volume_deviation > 0.40 and rider_deviation > 0.30:
-        return AnomalyResult(
-            type="DEMAND_DROP",
-            severity=calculate_severity(volume_deviation),
-            confidence=calculate_confidence(zone_data)
-        )
-    
-    return None
-```
+| Step | What the AI Does | Example |
+|------|------------------|---------|
+| 1. Learn Normal Patterns | Studies typical order volume for each zone and time | "Koramangala usually has 500 orders/hour at 7 PM" |
+| 2. Monitor in Real-Time | Continuously compares current data to normal patterns | "Right now there are only 200 orders/hour" |
+| 3. Flag Anomalies | Detects when current activity drops significantly below normal | "60% drop detected - potential disruption" |
+| 4. Assess Severity | Calculates how severe the disruption is | "Moderate disruption - 1.2x payout multiplier" |
+
+**Detection Thresholds:**
+- **Mild Disruption:** 20-40% below normal → Monitoring only
+- **Moderate Disruption:** 40-60% below normal → Trigger activated
+- **Severe Disruption:** >60% below normal → High-priority trigger
 
 ### 3. Trigger Validation AI
 
