@@ -900,27 +900,25 @@ Workers can view trigger status in real-time:
 
 ### 1. Differentiating Genuine vs Spoofed Workers
 
-FairRoute differentiates genuine disruption from spoofing using software telemetry and platform behavior, not GPS alone.
+FairRoute uses multi-source behavioral verification, not GPS-only checks.
 
-- Genuine patterns: continuous routes, realistic travel speed, active sessions, and matching order events during the disruption window.
-- Spoofing patterns: coordinate jumps, repetitive location traces, and claims with weak or missing platform activity.
-- Decision logic: each claim is scored from multi-source evidence and routed to low-, medium-, or high-risk handling.
+- Genuine patterns: continuous routes, plausible speed, active sessions, and matching order events.
+- Spoofing patterns: coordinate jumps, repetitive traces, and weak or missing platform activity.
+- Decision logic: each claim receives a risk score and is routed to low, medium, or high-risk handling.
 
 ### 2. Additional Data Signals Used for Fraud Detection
 
-Since FairRoute operates as a software-only platform, fraud detection relies on behavioral and network-based signals rather than device sensors.
-
-The system analyzes:
+FairRoute is software-only, so fraud detection relies on behavioral and network signals.
 
 - Platform activity logs to verify the worker was logged in, accepting orders, or actively engaged during the claimed disruption window.
 - IP vs GPS consistency to detect large geographic mismatches between reported coordinates and network location.
 - Historical behavior baselines to compare current movement and claim behavior against each worker's normal routes, working hours, and claim frequency.
 
-These signals are combined into a multi-dimensional feature vector analyzed by anomaly detection models such as Isolation Forests or LSTMs.
+These inputs form a multi-dimensional feature vector analyzed by anomaly models such as Isolation Forests or LSTMs.
 
 ### 3. Coordinated Fraud Ring Detection
 
-The platform monitors for synchronized abnormal behavior across accounts:
+The platform monitors synchronized anomalies across accounts:
 
 - Many users appearing in the same zone at the same time with similar claim timing.
 - Reused network and device signatures across multiple accounts.
@@ -929,17 +927,17 @@ The platform monitors for synchronized abnormal behavior across accounts:
 
 ### 4. Fair UX for Flagged Claims
 
-FairRoute uses a tiered workflow to reduce false denials while still controlling fraud:
+FairRoute uses tiered claim handling to balance fraud control and worker fairness:
 
 - Low-risk flags: short delay plus automated verification.
 - Medium-risk flags: photo/video proof analyzed by vision models.
 - High-risk flags: manual review with provisional payouts based on historical averages.
 
-This approach reduces fraud exposure while avoiding avoidable income loss for genuine workers during network drops or severe weather.
+This reduces fraud risk while avoiding unnecessary income loss for genuine workers during outages or severe weather.
 
 ### 5. Defense Against Coordinated Attacks
 
-When coordinated spoofing is detected, safeguards throttle high-risk payout paths and escalate investigation while low-risk verified claims continue to process. Multi-source verification and anomaly detection protect the insurance pool without broadly penalizing honest workers.
+When coordinated spoofing is detected, safeguards throttle high-risk payout paths and escalate investigation while low-risk verified claims continue. Multi-source verification and anomaly detection protect the insurance pool without broadly penalizing honest workers.
 
 ---
 
