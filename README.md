@@ -900,44 +900,46 @@ Workers can view trigger status in real-time:
 
 ### 1. Differentiating Genuine vs Spoofed Workers
 
-FairRoute uses multi-signal verification rather than GPS-only checks. A genuine worker stranded in weather disruption usually shows movement and work behavior that is consistent with normal delivery operations, even if orders are reduced.
+FairRoute differentiates genuine disruption from spoofing using software telemetry and platform behavior, not GPS alone.
 
-- Genuine patterns: route continuity, plausible speed changes, active app sessions, and matching delivery acceptance/completion timelines.
-- Spoofing patterns: abrupt location jumps, repeated stationary coordinates, mismatched device motion, and no corresponding platform activity.
-- Decision logic: anomaly scoring combines movement, telemetry, and platform signals to classify claims as low-, medium-, or high-risk.
+- Genuine patterns: continuous routes, realistic travel speed, active sessions, and matching order events during the disruption window.
+- Spoofing patterns: coordinate jumps, repetitive location traces, and claims with weak or missing platform activity.
+- Decision logic: each claim is scored from multi-source evidence and routed to low-, medium-, or high-risk handling.
 
-### 2. Data Signals Used to Detect Fraud Rings
+### 2. Additional Data Signals Used for Fraud Detection
 
-To defend against spoofing and collusion, FairRoute correlates multiple independent data streams:
+Since FairRoute operates as a software-only platform, fraud detection relies on behavioral and network-based signals rather than device sensors.
 
-- Accelerometer and gyroscope telemetry to validate real physical movement.
-- Delivery acceptance, pickup, and completion logs to confirm operational activity.
-- IP address reputation and network geolocation consistency checks.
-- Cell tower triangulation and Wi-Fi fingerprint consistency.
-- Historical worker behavior, usual zone radius, and time-of-day work patterns.
+The system analyzes:
 
-### 3. Coordinated Ring Detection
+- Platform activity logs to verify the worker was logged in, accepting orders, or actively engaged during the claimed disruption window.
+- IP vs GPS consistency to detect large geographic mismatches between reported coordinates and network location.
+- Historical behavior baselines to compare current movement and claim behavior against each worker's normal routes, working hours, and claim frequency.
 
-The platform continuously monitors for group-level anomalies, not just individual outliers.
+These signals are combined into a multi-dimensional feature vector analyzed by anomaly detection models such as Isolation Forests or LSTMs.
 
-- Spatiotemporal clustering detects many accounts appearing in the same high-risk zone within narrow time windows.
-- Device and network fingerprint analysis identifies repeated signatures across supposedly independent users.
-- Claim-velocity monitoring flags synchronized submission spikes that deviate from historical disruption baselines.
-- Graph-based linkage analysis highlights clusters with suspiciously similar movement and session behavior.
+### 3. Coordinated Fraud Ring Detection
 
-### 4. Fair Handling of Flagged Claims
+The platform monitors for synchronized abnormal behavior across accounts:
 
-FairRoute applies soft-flagging to protect honest workers during network instability, sensor noise, or severe weather.
+- Many users appearing in the same zone at the same time with similar claim timing.
+- Reused network and device signatures across multiple accounts.
+- Sudden claim spikes that diverge from weather-adjusted historical baselines.
+- Clustered behavior graphs that indicate coordinated spoofing attempts.
 
-- Low risk: claim auto-approved.
-- Medium risk: payout delayed for additional automated verification.
-- High risk: manual review with optional additional validation.
+### 4. Fair UX for Flagged Claims
 
-If flagged, workers receive transparent status updates and can provide live-location confirmation or recent activity proof. If fraud is not confirmed, payout is released after a controlled cooling period to avoid unfair income denial.
+FairRoute uses a tiered workflow to reduce false denials while still controlling fraud:
+
+- Low-risk flags: short delay plus automated verification.
+- Medium-risk flags: photo/video proof analyzed by vision models.
+- High-risk flags: manual review with provisional payouts based on historical averages.
+
+This approach reduces fraud exposure while avoiding avoidable income loss for genuine workers during network drops or severe weather.
 
 ### 5. Defense Against Coordinated Attacks
 
-When coordinated spoofing is suspected, FairRoute temporarily throttles affected payout flows and escalates review while keeping legitimate claims moving through risk-tiered paths. This multi-source verification and anomaly-detection approach protects the shared insurance pool without compromising fairness for genuine workers.
+When coordinated spoofing is detected, safeguards throttle high-risk payout paths and escalate investigation while low-risk verified claims continue to process. Multi-source verification and anomaly detection protect the insurance pool without broadly penalizing honest workers.
 
 ---
 
