@@ -62,7 +62,7 @@ const Dashboard = () => {
               <div className="w-10 h-10 rounded-xl bg-accent-orange/10 flex items-center justify-center mx-auto mb-2">
                 <IndianRupee size={18} className="text-accent-orange" />
               </div>
-              <p className="text-base font-bold text-foreground">₹49</p>
+              <p className="text-base font-bold text-foreground">₹69</p>
               <p className="text-[10px] text-muted-foreground font-medium">Premium</p>
             </div>
             <div className="text-center">

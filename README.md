@@ -12,8 +12,8 @@ An intelligent parametric insurance platform designed to protect gig economy wor
 4. [Weekly Pricing Model](#4-weekly-pricing-model)
 5. [Parametric Triggers](#5-parametric-triggers)
 6. [AI Integration](#6-ai-integration)
-7. [Tech Stack](#7-tech-stack)
-8. [Database Schema](#8-database-schema)
+7. [Adversarial Defense & Anti-Spoofing Strategy](#7-adversarial-defense--anti-spoofing-strategy)
+8. [Tech Stack](#8-tech-stack)
 9. [Development Roadmap](#9-development-roadmap)
 10. [Wireframes](#10-wireframes)
 11. [Sources](#sources)
@@ -22,39 +22,20 @@ An intelligent parametric insurance platform designed to protect gig economy wor
 
 ## 1. Problem & Worker Statistics
 
-### The Problem
+### Our Goal
 
-India has **7.7 million gig workers**, with delivery partners facing significant financial vulnerability:
+FairRoute protects gig workers from sudden income shocks by turning disruption data into fast, automatic payouts. Instead of waiting for manual claims, workers receive support when verified external events reduce their earning ability.
 
-- **Zero compensation** for lost hours during weather disruptions, platform issues, or low demand
-- **Unpredictable earnings** governed by opaque algorithmic scheduling
-- **No traditional insurance** covers short-timeframe income loss
+### How FairRoute Is Different
 
-### Key Statistics: Delivery Partners
+- **Built for short-term income loss:** Most insurance products focus on health, life, or assets. FairRoute is designed specifically for daily earning interruptions.
+- **Parametric and automatic:** Payouts are triggered by validated conditions (weather, demand collapse, zone restrictions), not long claim paperwork.
+- **Weekly micro-pricing:** Low weekly premiums fit gig worker cash flows better than traditional monthly or annual plans.
+- **AI-driven and transparent:** Risk scoring, trigger validation, and payout logic are data-backed and visible to workers.
 
-| Metric | Value |
-|--------|-------|
-| Daily Working Hours | 8–10 hours |
-| Monthly Earnings (Full-time) | ₹21,000 net |
-| Per-Order Payment | ₹15 – ₹90 |
-| Peak Hours | 7 PM – 10 PM |
+### Why It Is Better
 
-### Income Disruption Triggers
-
-| Trigger | Impact |
-|---------|--------|
-| Heavy Rainfall / Flooding | Orders drop 40-60%, unsafe conditions |
-| Heatwaves (>42°C) | Reduced platform activity |
-| Platform Demand Drops | No orders despite being online |
-| Zone Restrictions / Curfews | Unable to access delivery areas |
-
-### Why Current Solutions Fail
-
-- **Platform benefits** require active deliveries and high ratings
-- **Government schemes** have 90-120 day eligibility periods and low awareness
-- **Traditional insurance** doesn't cover income loss from external disruptions
-
-**FairRoute fills this gap with automated, parametric income protection.**
+FairRoute is faster, fairer, and more practical for delivery workers because it aligns with how they actually work: high-frequency shifts, variable earnings, and urgent need for liquidity during disruptions.
 
 ---
 
@@ -76,16 +57,6 @@ India has **7.7 million gig workers**, with delivery partners facing significant
 │  Dependents: Wife, 1 child, elderly parents                         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
-
-### Ramesh's Typical Day
-
-| Time | Activity |
-|------|----------|
-| 10:00 AM | Starts shift, logs into Swiggy app |
-| 10:00 AM – 2:00 PM | Morning deliveries (moderate demand) |
-| 2:00 PM – 5:00 PM | Afternoon lull (low demand period) |
-| 5:00 PM – 10:00 PM | Peak hours (high demand, incentive focus) |
-| 10:00 PM | Ends shift after 12+ hours |
 
 ### The Problem Scenario: Monsoon Day
 
@@ -155,25 +126,7 @@ India has **7.7 million gig workers**, with delivery partners facing significant
 | Platform Earnings | ₹480 | ₹480 |
 | Insurance Payout | ₹0 | ₹960 |
 | **Total Income** | **₹480** | **₹1,440** |
-| Weekly Premium Paid | - | ₹49 |
-
-### Other Persona Scenarios
-
-#### Scenario 2: Priya – Heatwave Disruption
-
-- Location: Hyderabad
-- Event: Temperature exceeds 45°C
-- Impact: Platform reduces order allocation to protect workers
-- FairRoute Trigger: Heat advisory + reduced platform activity
-- Payout: ₹600 for 6 hours of involuntary downtime
-
-#### Scenario 3: Suresh – Zone Shutdown
-
-- Location: Mumbai
-- Event: Government-imposed curfew due to civil disturbance
-- Impact: Unable to access delivery zone for 2 days
-- FairRoute Trigger: Government restriction notification
-- Payout: ₹1,800 for verified shutdown period
+| Weekly Premium Paid | - | ₹69 |
 
 ---
 
@@ -212,7 +165,7 @@ India has **7.7 million gig workers**, with delivery partners facing significant
 │  1. REGISTRATION                                               │
 │     ├─ Mobile number verification (OTP)                        │
 │     ├─ Basic profile creation                                  │
-│     └─ Platform account linking (Swiggy/Zomato/etc.)           │
+│     └─ Platform account linking (Swiggy)                       │
 │                                                                │
 │  2. KYC VERIFICATION                                           │
 │     ├─ Aadhaar verification (DigiLocker API)                   │
@@ -369,7 +322,7 @@ FairRoute uses a **weekly micro-premium model** designed specifically for gig wo
 │  │    SHIELD       │   │   SHIELD        │   │    SHIELD       │           │
 │  ├─────────────────┤   ├─────────────────┤   ├─────────────────┤           │
 │  │                 │   │                 │   │                 │           │
-│  │  ₹29/week       │   │  ₹49/week       │   │  ₹79/week       │           │
+│  │  ₹49/week       │   │  ₹69/week       │   │  ₹99/week       │           │
 │  │                 │   │                 │   │                 │           │
 │  │  Max Payout:    │   │  Max Payout:    │   │  Max Payout:    │           │
 │  │  ₹500/day       │   │  ₹800/day       │   │  ₹1,200/day     │           │
@@ -774,7 +727,7 @@ Workers can view trigger status in real-time:
     "Your zone (HSR Layout) has high monsoon flood risk (score: 74/100)",
     "You work 70% peak hours → higher disruption exposure",
     "Standard covers demand drops — relevant for your zone's pattern",
-    "At ₹49/week, this is 0.2% of your reported weekly income"
+    "At ₹69/week, this is 0.2% of your reported weekly income"
   ],
   "expected_monthly_payouts": "₹1,200 – ₹1,800 (based on zone history)"
 }
@@ -846,10 +799,10 @@ Workers can view trigger status in real-time:
 
 | Worker Says (Hindi) | Context Injected | Gemini Response |
 |---------------------|-----------------|-----------------|
-| "मेरा प्लान क्या है?" | `plan: standard, status: active, next_premium: Mar 10` | "आपका Standard Shield एक्टिव है। अगला प्रीमियम ₹49, 10 मार्च को कटेगा।" |
+| "मेरा प्लान क्या है?" | `plan: standard, status: active, next_premium: Mar 10` | "आपका Standard Shield एक्टिव है। अगला प्रीमियम ₹69, 10 मार्च को कटेगा।" |
 | "पिछला पेमेंट कब आया?" | `last_payout: {₹720, Jul 15, heavy_rainfall}` | "₹720 — 15 जुलाई को Heavy Rain trigger से आपके अकाउंट में आया था।" |
 | "आज बारिश होगी क्या?" | `zone: koramangala, weather_risk: 72, forecast: rain 5-9PM` | "आज शाम 5–9 बजे भारी बारिश की 68% संभावना है। ट्रिगर एक्टिवेट हो सकता है।" |
-| "Premium plan लेना है" | `current: standard, upgrade_cost: ₹79/week` | "Premium Shield: ₹79/हफ्ता, ₹1,200/दिन तक पेआउट, सभी ट्रिगर कवर। बदलें?" |
+| "Premium plan लेना है" | `current: standard, upgrade_cost: ₹99/week` | "Premium Shield: ₹99/हफ्ता, ₹1,200/दिन तक पेआउट, सभी ट्रिगर कवर। बदलें?" |
 
 **Cost Comparison:**
 
@@ -941,30 +894,54 @@ Workers can view trigger status in real-time:
 | Repeated low-value claims | Claim frequency cap: max 8 claims/month; peer-comparison z-score | SQL rule + monthly z-score computation |
 | Zone-hopping before triggers | Track zone_id changes in 24h before trigger; flag if > 2 zone switches | Real-time event stream check |
 
-### AI Model Performance Targets
+---
 
-| Model | Metric | Target | Measurement Method |
-|-------|--------|--------|--------------------|
-| Weather Risk (Prophet + XGBoost) | Precision@80 recall | >85% | Backtested on 2023–2025 IMD data vs actual disruption reports |
-| Zone Anomaly (Isolation Forest) | False positive rate | <10% | Measured against manual zone audits in pilot cities |
-| Trigger Validation | End-to-end precision | >95% | Ratio of valid triggers to total triggers over 30-day rolling window |
-| Fraud Scoring | Recall (catch rate) | >90% | Tested against synthetic fraud scenarios + red-team exercises |
-| Plan Recommender (XGBoost) | Conversion improvement | >20% vs random | A/B test: recommended plan vs default plan shown first |
-| Vernacular AI (Gemini 2.0 Flash) | Response relevance | >90% | Human eval on 2,000 sampled vernacular queries across 5 languages |
+## 7. Adversarial Defense & Anti-Spoofing Strategy
 
-### Model Retraining Schedule
+### 1. Differentiating Genuine vs Spoofed Workers
 
-| Model | Frequency | Trigger for Emergency Retrain |
-|-------|-----------|------------------------------|
-| Weather Risk Scorer | Weekly (every Monday 3 AM IST) | >15% accuracy drop on last 72h predictions |
-| Zone Activity Scorer | Weekly | New city/zone added to system |
-| Fraud Scorer | Bi-weekly | >5% increase in manual review queue |
-| Plan Recommender | Monthly | Conversion rate drops >10% from baseline |
-| Gemini System Prompt | On-demand | New feature launched or response relevance drops below 85% |
+FairRoute uses multi-signal verification rather than GPS-only checks. A genuine worker stranded in weather disruption usually shows movement and work behavior that is consistent with normal delivery operations, even if orders are reduced.
+
+- Genuine patterns: route continuity, plausible speed changes, active app sessions, and matching delivery acceptance/completion timelines.
+- Spoofing patterns: abrupt location jumps, repeated stationary coordinates, mismatched device motion, and no corresponding platform activity.
+- Decision logic: anomaly scoring combines movement, telemetry, and platform signals to classify claims as low-, medium-, or high-risk.
+
+### 2. Data Signals Used to Detect Fraud Rings
+
+To defend against spoofing and collusion, FairRoute correlates multiple independent data streams:
+
+- Accelerometer and gyroscope telemetry to validate real physical movement.
+- Delivery acceptance, pickup, and completion logs to confirm operational activity.
+- IP address reputation and network geolocation consistency checks.
+- Cell tower triangulation and Wi-Fi fingerprint consistency.
+- Historical worker behavior, usual zone radius, and time-of-day work patterns.
+
+### 3. Coordinated Ring Detection
+
+The platform continuously monitors for group-level anomalies, not just individual outliers.
+
+- Spatiotemporal clustering detects many accounts appearing in the same high-risk zone within narrow time windows.
+- Device and network fingerprint analysis identifies repeated signatures across supposedly independent users.
+- Claim-velocity monitoring flags synchronized submission spikes that deviate from historical disruption baselines.
+- Graph-based linkage analysis highlights clusters with suspiciously similar movement and session behavior.
+
+### 4. Fair Handling of Flagged Claims
+
+FairRoute applies soft-flagging to protect honest workers during network instability, sensor noise, or severe weather.
+
+- Low risk: claim auto-approved.
+- Medium risk: payout delayed for additional automated verification.
+- High risk: manual review with optional additional validation.
+
+If flagged, workers receive transparent status updates and can provide live-location confirmation or recent activity proof. If fraud is not confirmed, payout is released after a controlled cooling period to avoid unfair income denial.
+
+### 5. Defense Against Coordinated Attacks
+
+When coordinated spoofing is suspected, FairRoute temporarily throttles affected payout flows and escalates review while keeping legitimate claims moving through risk-tiered paths. This multi-source verification and anomaly-detection approach protects the shared insurance pool without compromising fairness for genuine workers.
 
 ---
 
-## 7. Tech Stack
+## 8. Tech Stack
 
 ### System Architecture Overview
 
@@ -1030,52 +1007,6 @@ Workers can view trigger status in real-time:
 
 ---
 
-## 8. Database Schema
-
-### Entity Relationship Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         DATABASE SCHEMA                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐           │
-│  │   WORKERS   │────────▶│  POLICIES   │────────▶│   PAYOUTS   │           │
-│  └─────────────┘    1:N  └─────────────┘    1:N  └─────────────┘           │
-│        │                       │                       │                    │
-│        │ 1:N                   │                       │                    │
-│        ▼                       │                       │                    │
-│  ┌─────────────┐               │                       │                    │
-│  │  WORK_LOGS  │               │                       │                    │
-│  └─────────────┘               │                       │                    │
-│                                │ N:1                   │ N:1                │
-│                                ▼                       ▼                    │
-│                          ┌─────────────┐         ┌─────────────┐           │
-│                          │   PLANS     │         │  TRIGGERS   │           │
-│                          └─────────────┘         └─────────────┘           │
-│                                                        │                    │
-│                                                        │ 1:N                │
-│                                                        ▼                    │
-│  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐           │
-│  │   ZONES     │◀────────│ZONE_TRIGGERS│────────▶│WEATHER_DATA │           │
-│  └─────────────┘         └─────────────┘         └─────────────┘           │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Database
-
-**PostgreSQL**
-
-**Key Tables:**
-- Users
-- Policies
-- Triggers
-- Claims
-- Payouts
-
----
-
 ## 9. Development Roadmap
 
 ### Phase 1: Ideation & Foundation
@@ -1085,11 +1016,6 @@ Workers can view trigger status in real-time:
 - Define insurance model
 - Design system architecture
 - Create prototype wireframes
-
-**Deliverables:**
-- README documentation
-- Architecture diagram
-- Concept video
 
 ### Phase 2: Automation & Protection
 
@@ -1111,254 +1037,19 @@ Workers can view trigger status in real-time:
 
 ## 10. Wireframes
 
-### Mobile App Screens
+### Mobile App Screens (Latest)
 
-#### 1. Onboarding Flow
+| Screen | Screen |
+|--------|--------|
+| **1. Welcome**<br>![Welcome Screen](frontend/wireframes/01-welcome.png) | **2. Register - Mobile Number**<br>![Register Mobile Number](frontend/wireframes/02-register-phone.png) |
+| **3. Register - OTP Verification**<br>![Register OTP Verification](frontend/wireframes/03-register-otp.png) | **4. Register - Profile Details**<br>![Register Profile Details](frontend/wireframes/04-register-profile.png) |
+| **5. KYC Verification**<br>![KYC Verification](frontend/wireframes/05-kyc.png) | **6. Plan Selection**<br>![Plan Selection](frontend/wireframes/06-plans.png) |
+| **7. Home Dashboard**<br>![Home Dashboard](frontend/wireframes/07-dashboard.png) | **8. Payout History**<br>![Payout History](frontend/wireframes/08-payouts.png) |
+| **9. Payout Details**<br>![Payout Details](frontend/wireframes/09-payout-detail.png) | **10. Active Trigger Alert**<br>![Active Trigger Alert](frontend/wireframes/10-trigger-alert.png) |
 
-```
-┌─────────────────────────────────┐     ┌─────────────────────────────────┐
-│         WELCOME SCREEN          │     │         KYC VERIFICATION        │
-├─────────────────────────────────┤     ├─────────────────────────────────┤
-│                                 │     │                                 │
-│      ┌─────────────────┐        │     │   Verify Your Identity          │
-│      │   FAIRROUTE     │        │     │                                 │
-│      │      LOGO       │        │     │   ┌─────────────────────────┐   │
-│      └─────────────────┘        │     │   │                         │   │
-│                                 │     │   │   Aadhaar Verification  │   │
-│   Income Protection for         │     │   │   via DigiLocker        │   │
-│   Gig Workers                   │     │   │                         │   │
-│                                 │     │   │   [Verify with Aadhaar] │   │
-│   ━━━━━━━━━━━━━━━━━━━━━━━━━━   │     │   │                         │   │
-│                                 │     │   └─────────────────────────┘   │
-│   • Automatic payouts during    │     │                                 │
-│     weather disruptions         │     │   ┌─────────────────────────┐   │
-│                                 │     │   │                         │   │
-│   • No manual claims needed     │     │   │   Bank Account/UPI      │   │
-│                                 │     │   │   for Payouts           │   │
-│   • Affordable weekly           │     │   │                         │   │
-│     premiums                    │     │   │   [Link Bank Account]   │   │
-│                                 │     │   │                         │   │
-│   ━━━━━━━━━━━━━━━━━━━━━━━━━━   │     │   └─────────────────────────┘   │
-│                                 │     │                                 │
-│   ┌─────────────────────────┐   │     │   ┌─────────────────────────┐   │
-│   │  Get Started →          │   │     │   │  Continue →             │   │
-│   └─────────────────────────┘   │     │   └─────────────────────────┘   │
-│                                 │     │                                 │
-│   Already have account? Login   │     │   Step 2 of 4                   │
-│                                 │     │                                 │
-└─────────────────────────────────┘     └─────────────────────────────────┘
-```
+**11. Profile**
 
-#### 2. Plan Selection
-
-```
-┌─────────────────────────────────┐     ┌─────────────────────────────────┐
-│       CHOOSE YOUR PLAN          │     │         PLAN DETAILS            │
-├─────────────────────────────────┤     ├─────────────────────────────────┤
-│                                 │     │                                 │
-│   Select coverage that fits     │     │   STANDARD SHIELD               │
-│   your needs                    │     │   ━━━━━━━━━━━━━━━━              │
-│                                 │     │                                 │
-│   ┌─────────────────────────┐   │     │   ₹49/week                      │
-│   │   BASIC SHIELD          │   │     │                                 │
-│   │   ₹29/week              │   │     │   Coverage Includes:            │
-│   │                         │   │     │                                 │
-│   │   Max: ₹500/day         │   │     │   ✓ Heavy Rainfall              │
-│   │   Weather + Zone        │   │     │   ✓ Urban Flooding              │
-│   └─────────────────────────┘   │     │   ✓ Zone Shutdowns              │
-│                                 │     │   ✓ Demand Drops                │
-│   ┌─────────────────────────┐   │     │                                 │
-│   │   STANDARD SHIELD ⭐    │   │     │   Payout Limits:                │
-│   │   ₹49/week   POPULAR    │   │     │   • Up to ₹800/day              │
-│   │                         │   │     │   • Up to ₹3,500/week           │
-│   │   Max: ₹800/day         │   │     │   • ₹100/hour rate              │
-│   │   Weather + Demand      │   │     │                                 │
-│   └─────────────────────────┘   │     │   AI Recommendation:            │
-│                                 │     │   ┌─────────────────────────┐   │
-│   ┌─────────────────────────┐   │     │   │ Based on your zone      │   │
-│   │   PREMIUM SHIELD        │   │     │   │ (Koramangala) and work  │   │
-│   │   ₹79/week              │   │     │   │ hours, this plan offers │   │
-│   │                         │   │     │   │ best value for you.     │   │
-│   │   Max: ₹1,200/day       │   │     │   └─────────────────────────┘   │
-│   │   All Coverage          │   │     │                                 │
-│   └─────────────────────────┘   │     │   ┌─────────────────────────┐   │
-│                                 │     │   │  Select This Plan →     │   │
-│   Compare Plans →               │     │   └─────────────────────────┘   │
-│                                 │     │                                 │
-└─────────────────────────────────┘     └─────────────────────────────────┘
-```
-
-#### 3. Home Dashboard
-
-```
-┌─────────────────────────────────┐     ┌─────────────────────────────────┐
-│          HOME SCREEN            │     │       ACTIVE TRIGGER            │
-├─────────────────────────────────┤     ├─────────────────────────────────┤
-│                                 │     │                                 │
-│   Hi, Ramesh 👋                 │     │   ⚠️ TRIGGER ACTIVE             │
-│                                 │     │                                 │
-│   ┌─────────────────────────┐   │     │   Heavy Rainfall Alert          │
-│   │   YOUR COVERAGE         │   │     │   Koramangala Zone              │
-│   │                         │   │     │                                 │
-│   │   Standard Shield       │   │     │   ━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│   │   ✓ Active              │   │     │                                 │
-│   │                         │   │     │   Started: 2:30 PM              │
-│   │   Next Premium: Mar 10  │   │     │   Duration: 2h 15m              │
-│   └─────────────────────────┘   │     │   Rainfall: 45mm                │
-│                                 │     │                                 │
-│   ┌─────────────────────────┐   │     │   Your Estimated Payout:        │
-│   │   ZONE STATUS           │   │     │   ┌─────────────────────────┐   │
-│   │                         │   │     │   │                         │   │
-│   │   🟢 Normal             │   │     │   │      ₹270               │   │
-│   │   No active triggers    │   │     │   │      (so far)           │   │
-│   │                         │   │     │   │                         │   │
-│   └─────────────────────────┘   │     │   │   2.25 hrs × ₹100/hr    │   │
-│                                 │     │   │   × 1.2x severity       │   │
-│   ┌─────────────────────────┐   │     │   │                         │   │
-│   │   THIS WEEK             │   │     │   └─────────────────────────┘   │
-│   │                         │   │     │                                 │
-│   │   Premium Paid: ₹49     │   │     │   Payout will be credited       │
-│   │   Payouts: ₹0           │   │     │   automatically when trigger    │
-│   │   Triggers: 0           │   │     │   ends.                         │
-│   └─────────────────────────┘   │     │                                 │
-│                                 │     │   ┌─────────────────────────┐   │
-│   ━━━━━━━━━━━━━━━━━━━━━━━━━━   │     │   │  View Details →         │   │
-│   🏠 Home  📊 History  ⚙️ More │     │   └─────────────────────────┘   │
-│                                 │     │                                 │
-└─────────────────────────────────┘     └─────────────────────────────────┘
-```
-
-#### 4. Payout History
-
-```
-┌─────────────────────────────────┐     ┌─────────────────────────────────┐
-│        PAYOUT HISTORY           │     │        PAYOUT DETAILS           │
-├─────────────────────────────────┤     ├─────────────────────────────────┤
-│                                 │     │                                 │
-│   Your Payouts                  │     │   Payout #FR-2024-0892          │
-│                                 │     │                                 │
-│   This Month: ₹1,240            │     │   ━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│   All Time: ₹4,820              │     │                                 │
-│                                 │     │   ✓ COMPLETED                   │
-│   ━━━━━━━━━━━━━━━━━━━━━━━━━━   │     │   Credited on Jul 15, 5:30 PM   │
-│                                 │     │                                 │
-│   ┌─────────────────────────┐   │     │   Amount: ₹720                  │
-│   │  Jul 15   Heavy Rain    │   │     │                                 │
-│   │  ✓ ₹720   Koramangala   │   │     │   ━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│   └─────────────────────────┘   │     │                                 │
-│                                 │     │   CALCULATION BREAKDOWN         │
-│   ┌─────────────────────────┐   │     │                                 │
-│   │  Jul 8    Zone Closure  │   │     │   Lost Hours:      6 hours      │
-│   │  ✓ ₹520   Indiranagar   │   │     │   Hourly Rate:     ₹100         │
-│   └─────────────────────────┘   │     │   Base Amount:     ₹600         │
-│                                 │     │   Severity:        1.2x         │
-│   ┌─────────────────────────┐   │     │   Final Amount:    ₹720         │
-│   │  Jun 29   Demand Drop   │   │     │                                 │
-│   │  ✓ ₹380   HSR Layout    │   │     │   ━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│   └─────────────────────────┘   │     │                                 │
-│                                 │     │   TRIGGER DETAILS               │
-│   ┌─────────────────────────┐   │     │                                 │
-│   │  Jun 22   Heavy Rain    │   │     │   Type: Heavy Rainfall          │
-│   │  ✓ ₹480   BTM Layout    │   │     │   Zone: Koramangala             │
-│   └─────────────────────────┘   │     │   Duration: 6 hours             │
-│                                 │     │   Rainfall: 52mm                │
-│   Show More ↓                   │     │   Source: IMD + OpenWeather     │
-│                                 │     │                                 │
-│   ━━━━━━━━━━━━━━━━━━━━━━━━━━   │     │   ┌─────────────────────────┐   │
-│   🏠 Home  📊 History  ⚙️ More │     │   │  Download Receipt →     │   │
-│                                 │     │   └─────────────────────────┘   │
-└─────────────────────────────────┘     └─────────────────────────────────┘
-```
-
-#### 5. Weather Forecast & Alerts
-
-```
-┌─────────────────────────────────┐     ┌─────────────────────────────────┐
-│      WEATHER & PREDICTIONS      │     │         ZONE DETAILS            │
-├─────────────────────────────────┤     ├─────────────────────────────────┤
-│                                 │     │                                 │
-│   Your Zone: Koramangala        │     │   KORAMANGALA                   │
-│                                 │     │   Bengaluru, Karnataka          │
-│   ┌─────────────────────────┐   │     │                                 │
-│   │   CURRENT CONDITIONS    │   │     │   ━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│   │                         │   │     │                                 │
-│   │   🌤️ 28°C               │   │     │   RISK ASSESSMENT               │
-│   │   Partly Cloudy         │   │     │                                 │
-│   │   Humidity: 65%         │   │     │   Weather Risk:    ██████░░ 72  │
-│   └─────────────────────────┘   │     │   Demand Stability: █████░░░ 58 │
-│                                 │     │   Overall Risk:     █████░░░ 65 │
-│   ┌─────────────────────────┐   │     │                                 │
-│   │   AI PREDICTION         │   │     │   ━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│   │                         │   │     │                                 │
-│   │   ⚠️ 68% chance of      │   │     │   RECENT TRIGGERS               │
-│   │   heavy rain tomorrow   │   │     │                                 │
-│   │   evening (5-9 PM)      │   │     │   Jul 15 - Heavy Rain           │
-│   │                         │   │     │   Jul 8  - Zone Closure         │
-│   │   Potential trigger     │   │     │   Jun 22 - Heavy Rain           │
-│   │   event                 │   │     │                                 │
-│   └─────────────────────────┘   │     │   ━━━━━━━━━━━━━━━━━━━━━━━━━    │
-│                                 │     │                                 │
-│   ┌─────────────────────────┐   │     │   COVERAGE STATUS               │
-│   │   7-DAY FORECAST        │   │     │                                 │
-│   │                         │   │     │   ✓ Weather Coverage Active     │
-│   │   Mon  Tue  Wed  Thu    │   │     │   ✓ Zone Shutdown Active        │
-│   │   🌤️   🌧️   🌧️   ⛅     │   │     │   ✓ Demand Drop Active          │
-│   │   28°  25°  24°  27°    │   │     │                                 │
-│   │                         │   │     │   You're protected!             │
-│   └─────────────────────────┘   │     │                                 │
-│                                 │     │   ┌─────────────────────────┐   │
-│   ━━━━━━━━━━━━━━━━━━━━━━━━━━   │     │   │  Change Zone →          │   │
-│   🏠 Home  📊 History  ⚙️ More │     │   └─────────────────────────┘   │
-│                                 │     │                                 │
-└─────────────────────────────────┘     └─────────────────────────────────┘
-```
-
-### Admin Dashboard Wireframes
-
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│  FAIRROUTE ADMIN DASHBOARD                                    👤 Admin ▼  │
-├────────────────────────────────────────────────────────────────────────────┤
-│                                                                            │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐         │
-│  │ Overview │ │ Workers  │ │ Triggers │ │ Payouts  │ │ Analytics│         │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘         │
-│                                                                            │
-│  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
-│                                                                            │
-│  QUICK STATS                                                               │
-│  ┌────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌──────────────┐ │
-│  │ Active Workers │ │ Active Triggers│ │ Today's Payouts│ │ Premium Rev. │ │
-│  │    12,847      │ │       3        │ │   ₹2,34,500    │ │  ₹6,29,503   │ │
-│  │   ↑ 5.2%       │ │   Mumbai(2)    │ │   847 workers  │ │   This Week  │ │
-│  └────────────────┘ └────────────────┘ └────────────────┘ └──────────────┘ │
-│                                                                            │
-│  ┌─────────────────────────────────────┐ ┌────────────────────────────────┐│
-│  │ ACTIVE TRIGGERS                     │ │ PAYOUT TREND (7 Days)          ││
-│  │                                     │ │                                ││
-│  │ ⚠️ Heavy Rain - Mumbai Andheri     │ │    ₹3L ┤      ╭─╮              ││
-│  │   Started: 2:30 PM | Duration: 3h   │ │        │    ╭─╯ │              ││
-│  │   Affected Workers: 342             │ │    ₹2L ┤ ╭──╯   ╰─╮           ││
-│  │                                     │ │        │╭╯        ╰─╮         ││
-│  │ ⚠️ Heavy Rain - Mumbai Goregaon    │ │    ₹1L ┼╯            ╰─        ││
-│  │   Started: 2:45 PM | Duration: 3h   │ │        │                       ││
-│  │   Affected Workers: 198             │ │        └──────────────────────│││
-│  │                                     │ │         Mon Tue Wed Thu Fri   ││
-│  └─────────────────────────────────────┘ └────────────────────────────────┘│
-│                                                                            │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ RECENT PAYOUTS                                                      │   │
-│  │                                                                     │   │
-│  │ Worker          │ Zone           │ Trigger      │ Amount  │ Status │   │
-│  │ ────────────────┼────────────────┼──────────────┼─────────┼────────│   │
-│  │ Ramesh K.       │ Koramangala    │ Heavy Rain   │ ₹720    │ ✓ Sent │   │
-│  │ Priya S.        │ HSR Layout     │ Demand Drop  │ ₹480    │ ✓ Sent │   │
-│  │ Suresh M.       │ Whitefield     │ Heavy Rain   │ ₹640    │ Pending│   │
-│  │ Lakshmi R.      │ Indiranagar    │ Heavy Rain   │ ₹560    │ Pending│   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                            │
-└────────────────────────────────────────────────────────────────────────────┘
-```
+![Profile Screen](frontend/wireframes/11-profile.png)
 
 ---
 
@@ -1373,31 +1064,6 @@ Workers can view trigger status in real-time:
 | Economic Times | Gig Economy Algorithm Transparency | [ET Article](https://economictimes.com) |
 | Fairwork India | Platform Ratings & Audits | [Fairwork Report](https://fair.work) |
 
-### Industry Reports
-
-- NITI Aayog – India's Booming Gig and Platform Economy (2022)
-- Boston Consulting Group – Unlocking the Potential of the Gig Economy (2021)
-- Nasscom – The Rise of Gig Economy in India
-- World Economic Forum – Future of Work Report
-
-### Gig Worker Community Reports
-
-- Indian Federation of App-Based Transport Workers (IFAT)
-- Gig Workers Association Reports
-- All India Gig Workers Union Publications
-
-### Government & Regulatory Sources
-
-- Ministry of Labour and Employment – Social Security Code 2020
-- IRDAI – Regulatory Sandbox Framework
-- e-Shram Portal Statistics
-
-### Weather & Environmental Data
-
-- India Meteorological Department (IMD)
-- OpenWeather API Documentation
-- Central Pollution Control Board – Air Quality Data
-
 ---
 
 ## License
@@ -1411,7 +1077,9 @@ MIT License - See LICENSE file for details
 **FairRoute Team**
 
 - Website: [fairroute.in](https://fairroute.in)
-- Email: contact@fairroute.in
+- Contact: Trisha Janath: trishajanath@gmail.com
+- Contact: Neelesh Padmanabh: neelesh2561@gmail.com
+- Contact: Ashwin Tom Shibu: ashwin.astrophilos@gmail.com
 - Twitter: [@FairRouteIndia](https://twitter.com/FairRouteIndia)
 
 ---

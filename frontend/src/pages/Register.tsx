@@ -12,9 +12,7 @@ const Register = () => {
   const [otp, setOtp] = useState("");
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
-  const [platform, setPlatform] = useState("");
-
-  const platforms = ["Swiggy", "Zomato", "Dunzo", "Zepto", "Other"];
+  const [platform] = useState("Swiggy");
 
   return (
     <MobileShell>
@@ -131,20 +129,8 @@ const Register = () => {
                 <label className="text-sm font-semibold text-foreground mb-3 block">
                   Delivery Platform
                 </label>
-                <div className="flex flex-wrap gap-2">
-                  {platforms.map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => setPlatform(p)}
-                      className={`px-5 py-3 rounded-xl text-sm font-semibold transition-all ${
-                        platform === p
-                          ? "gradient-orange text-accent-foreground shadow-md"
-                          : "bg-card text-foreground border border-border"
-                      }`}
-                    >
-                      {p}
-                    </button>
-                  ))}
+                <div className="px-5 py-3 rounded-xl text-sm font-semibold gradient-orange text-accent-foreground shadow-md inline-flex">
+                  {platform}
                 </div>
               </div>
             </div>

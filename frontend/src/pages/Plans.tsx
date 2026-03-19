@@ -8,7 +8,7 @@ const plans = [
   {
     id: "basic",
     name: "Basic Shield",
-    price: 29,
+    price: 49,
     payout: 500,
     features: [
       { icon: CloudRain, text: "Weather coverage" },
@@ -19,7 +19,7 @@ const plans = [
   {
     id: "standard",
     name: "Standard Shield",
-    price: 49,
+    price: 69,
     payout: 800,
     features: [
       { icon: CloudRain, text: "Weather coverage" },
@@ -31,12 +31,12 @@ const plans = [
   {
     id: "premium",
     name: "Premium Shield",
-    price: 79,
+    price: 99,
     payout: 1200,
     features: [
-      { icon: Zap, text: "All triggers covered" },
-      { icon: CloudRain, text: "Priority payouts" },
-      { icon: Shield, text: "Extended coverage" },
+      { icon: CloudRain, text: "Weather coverage" },
+      { icon: TrendingDown, text: "Demand drops" },
+      { icon: Zap, text: "Heat alerts & outages" },
     ],
     highlighted: false,
   },

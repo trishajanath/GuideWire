@@ -19,8 +19,8 @@ const activeTriggers = [
 
 const recentPayouts = [
   { id: "FR-0892", worker: "Ramesh K.", amount: "₹720", event: "Heavy Rain", date: "Jul 15", status: "Completed" },
-  { id: "FR-0891", worker: "Suresh M.", amount: "₹520", event: "Zone Closure", date: "Jul 15", status: "Completed" },
-  { id: "FR-0890", worker: "Priya D.", amount: "₹380", event: "Demand Drop", date: "Jul 14", status: "Completed" },
+  { id: "FR-0891", worker: "Ankit R.", amount: "₹520", event: "Zone Closure", date: "Jul 15", status: "Completed" },
+  { id: "FR-0890", worker: "Meera J.", amount: "₹380", event: "Demand Drop", date: "Jul 14", status: "Completed" },
   { id: "FR-0889", worker: "Amit S.", amount: "₹450", event: "Heavy Rain", date: "Jul 14", status: "Processing" },
   { id: "FR-0888", worker: "Raj P.", amount: "₹620", event: "Heatwave", date: "Jul 13", status: "Completed" },
 ];
