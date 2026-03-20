@@ -1,6 +1,6 @@
 # AI-Powered Parametric Income Protection for Gig Workers
 
-An intelligent parametric insurance platform designed to protect gig economy workers from income disruptions caused by external factors beyond their control. Built specifically for India's growing delivery workforce, providing automated, transparent, and affordable financial protection.
+> **FairRoute in 30 seconds:** Parametric income protection for India's 7.7M gig delivery workers. Workers pay ₹49–99/week. When IMD + OpenWeather data confirms a disruption (heavy rain, extreme heat, demand collapse), payouts hit their UPI within 2 hours — zero paperwork. A 5-layer fraud engine stops GPS spoofers. A Gemini-powered voice assistant handles queries in 5 Indian languages at ₹0.01/query. Built with React, Node.js, FastAPI, PostgreSQL on GCP.
 
 ---
 
@@ -157,71 +157,20 @@ FairRoute is faster, fairer, and more practical for delivery workers because it 
 
 #### Stage 1: Worker Onboarding
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                    ONBOARDING FLOW                             │
-├────────────────────────────────────────────────────────────────┤
-│                                                                │
-│  1. REGISTRATION                                               │
-│     ├─ Mobile number verification (OTP)                        │
-│     ├─ Basic profile creation                                  │
-│     └─ Platform account linking (Swiggy)                       │
-│                                                                │
-│  2. KYC VERIFICATION                                           │
-│     ├─ Aadhaar verification (DigiLocker API)                   │
-│     ├─ PAN verification (optional, for tax purposes)           │
-│     └─ Bank account linking (UPI/Account details)              │
-│                                                                │
-│  3. WORK HISTORY SYNC                                          │
-│     ├─ Connect delivery platform account                       │
-│     ├─ Import last 30 days work history                        │
-│     └─ Calculate baseline earning patterns                     │
-│                                                                │
-│  4. PLAN SELECTION                                             │
-│     ├─ View available coverage tiers                           │
-│     ├─ AI-recommended plan based on work patterns              │
-│     └─ Select and confirm coverage                             │
-│                                                                │
-│  5. PAYMENT SETUP                                              │
-│     ├─ Choose payment method (UPI/Auto-deduct)                 │
-│     ├─ Weekly premium auto-deduction authorization             │
-│     └─ First premium payment                                   │
-│                                                                │
-│  ✓ COVERAGE ACTIVE                                             │
-│                                                                │
-└────────────────────────────────────────────────────────────────┘
-```
+1. **Register** — Mobile OTP → basic profile → link Swiggy/Zomato account
+2. **KYC** — Aadhaar via DigiLocker, optional PAN, bank/UPI linking
+3. **Work History** — Import last 30 days from platform, calculate baseline earnings
+4. **Plan Selection** — AI-recommended tier, confirm coverage
+5. **Payment** — UPI auto-deduction setup → first premium → **coverage active**
 
 #### Stage 2: Continuous Monitoring
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                 REAL-TIME MONITORING                           │
-├────────────────────────────────────────────────────────────────┤
-│                                                                │
-│  DATA SOURCES                   MONITORING PARAMETERS          │
-│  ─────────────                  ─────────────────────          │
-│                                                                │
-│  Weather APIs ─────────────────▶ Temperature                   │
-│  (IMD, OpenWeather)              Rainfall (mm/hour)            │
-│                                  Humidity levels               │
-│                                  Air quality index             │
-│                                                                │
-│  Platform APIs ────────────────▶ Order volume (zone-wise)      │
-│  (Partner data feed)             Active delivery partners      │
-│                                  Average delivery time         │
-│                                  Surge pricing status          │
-│                                                                │
-│  Government APIs ──────────────▶ Curfew notifications          │
-│  (Disaster mgmt)                 Zone restrictions             │
-│                                  Emergency alerts              │
-│                                                                │
-│  Worker App ───────────────────▶ Login status                  │
-│  (FairRoute)                     GPS location                  │
-│                                  Active/idle time              │
-│                                                                │
-└────────────────────────────────────────────────────────────────┘
-```
+| Data Source | What We Monitor |
+|-------------|----------------|
+| Weather APIs (IMD, OpenWeather) | Temperature, rainfall (mm/hr), humidity, AQI |
+| Platform data feed | Order volume per zone, active partners, surge status |
+| Government alerts | Curfew notifications, zone restrictions |
+| FairRoute app | Worker login status, GPS, active/idle time |
 
 #### Stage 3: Trigger Detection & Validation
 
@@ -258,45 +207,9 @@ FairRoute is faster, fairer, and more practical for delivery workers because it 
 
 #### Stage 4: Payout Processing
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                  PAYOUT WORKFLOW                               │
-├────────────────────────────────────────────────────────────────┤
-│                                                                │
-│  TRIGGER CONFIRMED                                             │
-│         │                                                      │
-│         ▼                                                      │
-│  ┌──────────────────────────────────────────────────┐          │
-│  │ PAYOUT CALCULATION                               │          │
-│  │                                                  │          │
-│  │ Base Amount = (Lost Hours) × (Hourly Rate)      │          │
-│  │ Multiplier = Event Severity Factor              │          │
-│  │ Cap = Maximum daily/weekly payout limit         │          │
-│  │                                                  │          │
-│  │ Final Payout = min(Base × Multiplier, Cap)      │          │
-│  └──────────────────────────────────────────────────┘          │
-│         │                                                      │
-│         ▼                                                      │
-│  ┌──────────────────────────────────────────────────┐          │
-│  │ VERIFICATION                                     │          │
-│  │                                                  │          │
-│  │ ✓ Policy active                                  │          │
-│  │ ✓ Premium current                                │          │
-│  │ ✓ Within coverage limits                         │          │
-│  │ ✓ No duplicate claims                            │          │
-│  └──────────────────────────────────────────────────┘          │
-│         │                                                      │
-│         ▼                                                      │
-│  ┌──────────────────────────────────────────────────┐          │
-│  │ TRANSFER                                         │          │
-│  │                                                  │          │
-│  │ Method: UPI / Bank Transfer                      │          │
-│  │ Timeline: Within 2 hours of trigger confirmation │          │
-│  │ Notification: SMS + App push notification        │          │
-│  └──────────────────────────────────────────────────┘          │
-│                                                                │
-└────────────────────────────────────────────────────────────────┘
-```
+1. **Calculate:** `Payout = min(Lost_Hours × Hourly_Rate × Severity_Multiplier, Daily_Cap)`
+2. **Verify:** Policy active? Premium current? Within limits? No duplicates?
+3. **Transfer:** UPI / bank transfer within 2 hours + SMS & push notification
 
 ---
 
@@ -413,10 +326,8 @@ Final Payout: ₹1,200 (capped) ✓
 
 | Trigger | Threshold | Data Source | Payout Activation |
 |---------|-----------|-------------|-------------------|
-| Heavy Rainfall | >30mm in 3 hours | IMD API | Automatic |
-| Extreme Heat | >42°C sustained | Weather stations | Automatic |
-| Urban Flooding | Water logging reported | Municipal + satellite | Automatic |
-| Poor Visibility | <100m visibility | Aviation weather | Automatic |
+| Heavy Rainfall | >30mm in 3 hours | IMD API + OpenWeather | Automatic |
+| Extreme Heat | >42°C sustained | IMD API + OpenWeather | Automatic |
 | Cyclone Alert | IMD Orange/Red alert | IMD warnings | Automatic |
 
 #### 2. Platform-Based Triggers
@@ -432,10 +343,8 @@ Final Payout: ₹1,200 (capped) ✓
 
 | Trigger | Condition | Data Source | Payout Activation |
 |---------|-----------|-------------|-------------------|
-| Government Curfew | Official curfew announcement | Govt notifications | Automatic |
-| Civil Disturbance | Area safety restrictions | News + official sources | Verified |
-| Infrastructure Failure | Major road/transport disruption | Traffic authorities | Verified |
-| Public Health Emergency | Health-related restrictions | Health department | Automatic |
+| Government Curfew | Official curfew announcement | Govt notifications (manual input) | Automatic |
+| Public Health Emergency | Health-related restrictions | Govt notifications (manual input) | Automatic |
 
 ### Trigger Validation Process
 
@@ -510,12 +419,12 @@ Workers can view trigger status in real-time:
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  DATA INGESTION (APScheduler periodic jobs)                                  │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │ IMD RSS Feed│  │ OpenWeather │  │ Google Maps │  │ Worker App  │        │
-│  │ (scrape     │  │ API (free   │  │ Routes API  │  │ GPS + idle  │        │
-│  │  every 15m) │  │  tier: 1K   │  │ (congestion │  │  events via │        │
-│  │             │  │  calls/day) │  │  data)      │  │  Firebase)  │        │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                         │
+│  │ IMD RSS Feed│  │ OpenWeather │  │ Worker App  │                         │
+│  │ (scrape     │  │ API (free   │  │ GPS + idle  │                         │
+│  │  every 15m) │  │  tier: 1K   │  │  events via │                         │
+│  │             │  │  calls/day) │  │  Firebase)  │                         │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘                         │
 │         │                │                │                │               │
 │         └────────────────┴────────────────┴────────────────┘               │
 │                                   │                                         │
@@ -832,7 +741,7 @@ Workers can view trigger status in real-time:
 │  │ LAYER 1: GPS VALIDATION                    weight: 0.25 │    │
 │  │ ├─ Is worker GPS inside registered zone polygon?         │    │
 │  │ ├─ GPS accuracy < 50m? (reject mock GPS with 0m accuracy)│    │
-│  │ ├─ Movement consistency: accelerometer vs GPS match?     │    │
+│  │ ├─ Movement consistency: trajectory vs IP location match?  │    │
 │  │ └─ Score: 0 (valid) to 1 (spoofed/outside zone)         │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                          │                                      │
@@ -841,7 +750,7 @@ Workers can view trigger status in real-time:
 │  │ LAYER 2: ACTIVITY VERIFICATION             weight: 0.20 │    │
 │  │ ├─ App foreground/background time during trigger window  │    │
 │  │ ├─ Minimum session duration: 60% of trigger window       │    │
-│  │ ├─ Device sensor data: screen on, gyroscope active       │    │
+│  │ ├─ App interaction data: screen on, taps, navigation use  │    │
 │  │ └─ Score: 0 (genuinely active) to 1 (suspicious)        │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                          │                                      │
@@ -884,60 +793,193 @@ Workers can view trigger status in real-time:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Anti-Gaming Measures:**
-
-| Attack Vector | Detection Method | Implementation |
-|---------------|-----------------|----------------|
-| Fake GPS / mock location apps | Android `isMockLocationEnabled()` check + accelerometer-GPS consistency | App-level check before GPS data is sent |
-| Login only during trigger events | Pearson correlation: login_timestamps vs trigger_timestamps over 30 days | Flagged if correlation > 0.7 |
-| Collusion (coordinated fake claims) | Graph clustering on claim timestamps + GPS proximity between workers | NetworkX graph analysis, weekly batch job |
-| Repeated low-value claims | Claim frequency cap: max 8 claims/month; peer-comparison z-score | SQL rule + monthly z-score computation |
-| Zone-hopping before triggers | Track zone_id changes in 24h before trigger; flag if > 2 zone switches | Real-time event stream check |
-
 ---
 
 ## 7. Adversarial Defense & Anti-Spoofing Strategy
 
-### 1. Differentiating Genuine vs Spoofed Workers
+> **Threat Model:** A syndicate of 500+ delivery workers in a tier-1 city organizes via encrypted Telegram groups. They use advanced GPS-spoofing applications (Fake GPS, Mock Locations Pro, rooted-device Xposed modules) to fabricate their positions inside severe red-alert weather zones — while physically resting at home. This triggers mass false payouts and drains the liquidity pool within hours.
+>
+> Simple GPS verification is officially obsolete. The following is FairRoute's multi-layered architectural response.
 
-FairRoute uses multi-source behavioral verification, not GPS-only checks.
+### TL;DR: Anti-Spoofing Strategy
 
-- Genuine patterns: continuous routes, plausible speed, active sessions, and matching order events.
-- Spoofing patterns: coordinate jumps, repetitive traces, and weak or missing platform activity.
-- Decision logic: each claim receives a risk score and is routed to low, medium, or high-risk handling.
+**Problem:** GPS spoofing apps let fraud rings fake their location. A single GPS check cannot tell a stranded worker from a bad actor sitting at home.
 
-### 2. Additional Data Signals Used for Fraud Detection
+**Solution:** FairRoute replaces single-signal GPS verification with a **Behavioral Authenticity Score (BAS)** — a 0–1 composite score built from 5 software-only signal categories: GPS trajectory physics, network environment (IP geolocation + Wi-Fi + connection type), delivery platform activity, historical behavior baseline, and cross-worker zone corroboration. No hardware sensors required.
 
-FairRoute is software-only, so fraud detection relies on behavioral and network signals.
+**How it works (30-second version):**
 
-- Platform activity logs to verify the worker was logged in, accepting orders, or actively engaged during the claimed disruption window.
-- IP vs GPS consistency to detect large geographic mismatches between reported coordinates and network location.
-- Historical behavior baselines to compare current movement and claim behavior against each worker's normal routes, working hours, and claim frequency.
+```
+  Worker claim arrives
+        │
+        ▼
+  ┌─────────────────────────┐
+  │  Collect 5 signal types  │
+  │  (GPS, Network, Platform,│
+  │   History, Cross-worker) │
+  └───────────┬─────────────┘
+              │
+              ▼
+  ┌─────────────────────────┐
+  │  Compute BAS (0.0–1.0)  │
+  └───────────┬─────────────┘
+              │
+    ┌─────────┼──────────┬──────────────┐
+    │         │          │              │
+    ▼         ▼          ▼              ▼
+  ≥ 0.75    0.50–0.74  0.25–0.49     < 0.25
+    │         │          │              │
+    ▼         ▼          ▼              ▼
+  AUTO-     SOFT       PROVISIONAL   AUTO-
+  APPROVE   VERIFY     PAYOUT (60%)  REJECT
+  (2 hrs)   (photo)    + review      + appeal
+```
 
-These inputs form a multi-dimensional feature vector analyzed by anomaly models such as Isolation Forests or LSTMs.
+**Ring detection:** Coordinated attacks are caught via temporal claim clustering (burst detection), shared IP/device grouping (SQL queries), and behavioral red flags (claim frequency caps, login-vs-alert timing) — all server-side, no client cooperation needed.
 
-### 3. Coordinated Fraud Ring Detection
+**Fairness guarantee:** Honest workers with poor signals get provisional payouts first, investigate later. A progressive Trust Score rewards long-term genuine users with faster approvals. A circuit-breaker prevents mass false rejections during real emergencies.
 
-The platform monitors synchronized anomalies across accounts:
+> **MVP note:** All signals described above use standard Android APIs and server-side data — no special hardware, no rooted-device detection libraries, no third-party SDKs required at launch. More advanced detection (graph-based ring analysis, ML anomaly scoring) is layered in as data volume grows.
 
-- Many users appearing in the same zone at the same time with similar claim timing.
-- Reused network and device signatures across multiple accounts.
-- Sudden claim spikes that diverge from weather-adjusted historical baselines.
-- Clustered behavior graphs that indicate coordinated spoofing attempts.
+---
 
-### 4. Fair UX for Flagged Claims
+### 7.1 The Differentiation: Genuine Worker vs. Bad Actor
 
-FairRoute uses tiered claim handling to balance fraud control and worker fairness:
+FairRoute does **not** rely on any single verification signal. Instead, it constructs a **Behavioral Authenticity Score (BAS)** per claim by fusing 5 independent signal categories — all collectible via standard mobile software APIs with no special hardware required. A spoofing app can fake GPS coordinates — but it cannot simultaneously fake IP geolocation, Wi-Fi environment, battery drain patterns, delivery platform order history, and inter-worker movement correlation.
 
-- Low-risk flags: short delay plus automated verification.
-- Medium-risk flags: photo/video proof analyzed by vision models.
-- High-risk flags: manual review with provisional payouts based on historical averages.
+#### 7.1.1 Genuine vs. Spoofing — Signal Comparison
 
-This reduces fraud risk while avoiding unnecessary income loss for genuine workers during outages or severe weather.
+| Signal | ✓ Genuine Worker | ✗ GPS Spoofer |
+|--------|-----------------|--------------|
+| **GPS Trajectory** | Natural deceleration, 2–8m jitter, road-following path | Teleportation, zero jitter, no waypoints, `isMockLocationEnabled()` = true |
+| **Platform Activity** | Active session before disruption, orders completed, battery draining 15–25%/hr, screen interactions logged | No orders, zero taps, flat battery (on charger), session started only after weather alert |
+| **Network** | Mobile data (4G/5G), IP matches GPS city, Wi-Fi BSSIDs change along route | Home Wi-Fi, IP resolves to different neighborhood, broadband connection |
+| **Behavior Baseline** | 90+ days history, claims match zone-wide events, regular shift pattern | Weather-correlated logins, 5x claim ratio vs peers, sudden zone switches |
+| **Cross-Worker** | 40–90% of zone workers affected during genuine event | Only ring members claim; rest of zone works normally |
 
-### 5. Defense Against Coordinated Attacks
+#### 7.1.3 Behavioral Authenticity Score (BAS) — Signal Weights
 
-When coordinated spoofing is detected, safeguards throttle high-risk payout paths and escalate investigation while low-risk verified claims continue. Multi-source verification and anomaly detection protect the insurance pool without broadly penalizing honest workers.
+| Signal | Weight | Key Checks |
+|--------|--------|------------|
+| **GPS Physics** | 0.20 | Mock location flag, jitter analysis (real: 2–8m σ, spoofed: <0.5m), speed feasibility (<150 km/h), trajectory continuity, duplicate coordinate detection |
+| **Network Environment** | 0.25 | Server-side IP geolocation vs GPS city, connection type (mobile data vs Wi-Fi), Wi-Fi BSSID neighborhood match |
+| **Platform Activity** | 0.25 | Active shift before disruption, order completion trail, app interaction events, battery drain curve, push notifications |
+| **Historical Baseline** | 0.15 | Cumulative trust score, login-vs-weather correlation (flag if r > 0.6), zone familiarity, claim-to-premium ratio vs peers, shift consistency |
+| **Cross-Worker Corroboration** | 0.15 | Zone-wide disruption ratio (genuine: 40–90% affected), spatial clustering plausibility, independent worker reports |
+
+**BAS scoring thresholds:** ≥ 0.75 → auto-approve | 0.50–0.74 → soft hold | 0.25–0.49 → hard hold | < 0.25 → auto-reject
+
+> **MVP scope:** At launch, BAS uses rule-based checks (mock-location flag, IP city match, platform login, claim frequency cap, zone disruption ratio). ML-weighted scoring layers in as labeled data accumulates.
+
+---
+
+### 7.2 The Data: Detecting Coordinated Fraud Rings Beyond GPS
+
+GPS coordinates are one-dimensional. FairRoute's fraud ring detection operates on a **multi-dimensional behavioral graph** that makes coordinated spoofing exponentially harder to execute undetected.
+
+#### 7.2.1 Data Points Collected Per Claim Event
+
+| # | Data Point | Source | Why It Matters for Ring Detection |
+|---|-----------|--------|-----------------------------------|
+| 1 | **IP Address (city-level geo)** | Server-side from HTTP request | GPS says Mumbai but IP resolves to Delhi = instant flag. No client-side dependency — every API request carries the IP. Residential ISP at home ≠ mobile carrier IP on the road. |
+| 2 | **Connection Type (Wi-Fi vs Mobile Data)** | Android ConnectivityManager (standard API) | Workers in the field use mobile data. Spoofers at home are on Wi-Fi. Simple boolean check with high signal value. |
+| 3 | **Mock Location Flag** | Android `isMockLocationEnabled()` | Catches ~60% of spoofers directly. Requires no special permissions — standard Location API returns this flag. |
+| 4 | **Battery Level + Charging State** | Android BatteryManager (standard API) | Active delivery drains ~15–25%/hour. Spoofer at home on charger = flat/rising curve. Collected at claim-start and claim-end. |
+| 5 | **Device Fingerprint (basic)** | Screen resolution + device model + Android ID | Detects multi-account fraud: one person operating multiple worker accounts from the same physical device. |
+| 6 | **Claim Submission Timestamp** | Server-side event log | Coordinated rings submit claims in tight bursts (500 claims in 10 min). Genuine claims arrive with natural variance (spread over 1–3 hours). |
+| 7 | **Platform Order History (last 6 hours)** | Self-reported with delivery screenshot verification | Genuine workers have a trail of completed/attempted orders before the disruption. Spoofers have zero platform activity. |
+| 8 | **App Interaction Events** | In-app event logging (taps, scrolls, order views) | Genuine workers actively use the app. Spoofers have near-zero interaction after opening it. |
+| 9 | **GPS Trajectory Pattern** | Standard Android Location API | Checks for teleportation, jitter consistency, and duplicate coordinates across workers. No special GNSS APIs needed. |
+
+#### 7.2.2 Coordinated Ring Detection — 4-Layer Pipeline
+
+The critical weakness of a fraud ring: **they must coordinate**. Coordination creates detectable statistical patterns invisible at the individual level but obvious at the network level.
+
+| Layer | What It Detects | How |
+|-------|----------------|-----|
+| **A: Temporal Clustering** | Claims arriving in improbable bursts | Bucket claims into 5-min windows. If count >> historical average for that zone → flag. Rings trigger 500 claims in 10 min; genuine claims spread over 1–3 hours. |
+| **B: Shared Infrastructure** | Same device/network across accounts | SQL GROUP BY queries: same IP subnet (>3 claims), same device hash (>1 account), same GPS coordinates (>5 workers within 11m in 15 min), >10 claims from zone in <5 min. |
+| **C: Behavioral Red Flags** | Abnormal per-worker patterns | Rolling 30-day window: claim frequency >8/month, payout ratio >3x zone average, >70% of logins within 10 min of weather alerts, >2 zone switches in 24h before trigger. |
+| **D: GPS Physics Checks** | Physically impossible GPS behavior | Teleportation (>150 km/h implied), snap-to-grid coordinates (zero decimal noise), duplicate GPS traces across workers (shared spoofing template), zero-drift stationary position. |
+
+> **Scale path:** MVP uses SQL GROUP BY queries. As data grows, graduate to lightweight graph analysis (NetworkX) and replace rule-based flags with Isolation Forest.
+
+#### 7.2.3 Telegram-Coordinated Attack — Specific Countermeasures
+
+The threat model specifies coordination via Telegram. FairRoute detects this without any access to Telegram — purely from observable server-side data:
+
+| Telegram Attack Pattern | Observable Consequence | FairRoute Detection |
+|------------------------|----------------------|---------------------|
+| Admin sends "Go online now, use these coordinates: 12.9716, 77.5946" | 100+ workers set identical spoofed GPS | **Duplicate coordinate detection:** SQL query — claims from >5 workers at exact same lat/lng (within 0.0001° ≈ 11m) in same 15-min window → ring alert. |
+| Admin shares pre-configured spoofing app | Multiple workers use same mock location provider | **Mock location flag:** Android `isMockLocationEnabled()` catches the spoofing app. If >10 workers in a batch have mock=true → cohort flagged. |
+| "Wait for the red alert, then open the app" | Burst of logins within 2–5 min of IMD alert | **Alert-to-login delay check:** If >20 logins arrive within 5 min of alert publication (vs. normal spread of 30 min–3 hours), batch-flag the early cluster. Simple timestamp comparison. |
+| Ring members register from same area | Similar IP ranges across accounts | **IP subnet grouping:** Workers filing claims from same /24 IP subnet AND with same claim timing → linked. Standard SQL GROUP BY. |
+| Ring uses VPN to mask IP | Non-mobile-carrier IP appears | **Connection type check:** Genuine delivery workers are on Jio/Airtel mobile data. Claims arriving from Wi-Fi or from IP ranges belonging to known VPN providers → flag. |
+
+---
+
+### 7.3 The UX Balance: Protecting Honest Workers from False Flags
+
+> **Design Principle:** A delivery worker caught in a genuine monsoon should never feel punished by the anti-fraud system. The cost of a false rejection (honest worker loses income protection when they need it most) is far higher than the cost of a single false approval. The system is tuned for **high recall on genuine claims** with surgical precision on fraud rings.
+
+#### 7.3.1 Tiered Claim Resolution — Four Tracks
+
+| Track | BAS Score | Action | Worker Sees | Expected % |
+|-------|-----------|--------|-------------|------------|
+| **1: Instant Approve** | ≥ 0.75 | Full payout in 2 hours, no extra steps | "✓ Payout approved — ₹720 arriving shortly" | 70–80% |
+| **2: Soft Verify** | 0.50–0.74 | In-app photo or voice note requested; Gemini Vision validates conditions. Payout in 4 hours if passed. | "📸 Quick verification needed — tap to share photo" | 15–20% |
+| **3: Provisional** | 0.25–0.49 | **Pay first, investigate later.** 60% payout within 4 hours. Manual review in 24–48h. If approved → remaining 40% paid. If rejected → deducted from future premiums (never clawed back). | "⏳ ₹432 provisional sent. Decision in 24 hours." | 5–8% |
+| **4: Auto-Reject** | < 0.25 | Rejected with non-accusatory message + appeal option. Appeal with photos/screenshots reviewed in 48h. If overturned: full payout + ₹50 credit. | "We couldn't verify conditions. Tap to appeal." | <3% |
+
+#### 7.3.2 Handling the "Network Drop in Bad Weather" Edge Case
+
+Bad weather causes legitimate network degradation. This is exactly when genuine workers need payouts — and also when signal-based verification is weakest. FairRoute addresses this directly:
+
+| Problem | Why It Happens | FairRoute Solution |
+|---------|---------------|-------------------|
+| **GPS signal loss during heavy rain** | Atmospheric attenuation + dense cloud cover degrades satellite signals | System accepts the **last known valid GPS position** (before signal loss) if it was within the trigger zone. Missing GPS ≠ automatic rejection. IP geolocation used as fallback to confirm approximate location. |
+| **Wi-Fi scan empty/limited** | Low-density area, highway | Wi-Fi signal weight reduced to 0; other 4 signals compensate. System tolerates 1–2 missing signals. |
+| **App crashes / goes to background** | Rain + cold fingers + cheap phone = app instability | Background location service continues collecting GPS + network data even when app is minimized. If app fully crashes, last 30 min of buffered location data (stored locally on device) is uploaded when app restarts. |
+| **Photo verification fails** | Camera lens wet, low light, worker under shelter with no view of conditions | Track 2 offers a VOICE VERIFICATION alternative: worker records a 15-second voice note describing conditions. Gemini 2.0 Flash (STT) transcribes and validates consistency with zone weather data. This is easier than taking a photo in a storm. |
+| **Phone battery dies** | Extended outdoor exposure with GPS draining battery | If device was collecting data for >60% of the trigger window before dying, the partial data is scored. BAS is computed on available data, not penalized for device shutdown. |
+
+#### 7.3.3 Progressive Trust Score — Rewarding Honest Workers
+
+Every worker starts at **Trust Score = 0.50** (neutral). Score adjusts over time:
+
+**Increases:** +0.02/week with no claims, +0.05 per verified claim, +0.03 for cooperative verification, +0.10 if appeal overturned in worker's favor
+
+**Decreases:** -0.05 for flagged claim, -0.15 for rejected claim, -0.10 for skipping verification, -0.30 for confirmed fraud (suspended)
+
+| Score | Tier | Effect |
+|-------|------|--------|
+| 0.80–1.00 | Gold | Auto-approve threshold lowered to 0.50; priority queue |
+| 0.60–0.79 | Silver | Standard verification; threshold 0.65 |
+| 0.40–0.59 | Standard | Normal verification; threshold 0.75 |
+| 0.20–0.39 | Review | All claims require Track 2+ verification |
+| 0.00–0.19 | Suspended | Claims frozen; account under investigation |
+
+> A worker with 6+ months of honest history who gets one ambiguous flag is NEVER treated like a new account with zero history.
+
+#### 7.3.4 Transparency & Communication
+
+Workers are never left in the dark. FairRoute's anti-fraud system is fast but not opaque:
+
+| Scenario | What Worker Sees | Timing |
+|----------|-----------------|--------|
+| Claim auto-approved | "✓ Payout approved — ₹720 will be in your account within 2 hours" | Immediate |
+| Soft verification needed | "📸 Quick check needed — Take a photo of your surroundings to confirm conditions" | Within 15 min of claim |
+| Provisional payout issued | "⏳ ₹432 sent now. Full payout decision in 24 hours. Nothing else needed from you." | Within 4 hours |
+| Claim rejected | "We couldn't verify conditions for this event. This sometimes happens with signal issues. Tap to appeal with a photo or voice note." | Within 1 hour |
+| Appeal successful | "✓ Appeal approved! Full ₹720 payout + ₹50 credit for the inconvenience. Thank you for your patience." | Within 48 hours |
+| Trust score increased | "🛡️ Your Trust Score improved! You're now a Silver-tier member — faster payouts ahead." | End of week summary |
+
+#### 7.3.5 Systemic Fairness Safeguards
+
+- **Circuit-breaker:** If >25% of claims in a zone are flagged during a confirmed severe event, fraud engine auto-pauses for that zone → standard weather-only verification kicks in.
+- **Bias audit:** Monthly rejection rate analysis by device tier, zone income level, and worker age. Budget phone users with limited API access don't get penalized.
+- **Ombudsman path:** Workers who exhaust normal appeals can escalate to an independent reviewer.
+- **No silent penalties:** Trust score, claim status, and verification requirements are always visible in-app. No hidden blacklists.
 
 ---
 
@@ -952,35 +994,25 @@ When coordinated spoofing is detected, safeguards throttle high-risk payout path
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                         CLIENT LAYER                                │    │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                  │    │
-│  │  │ Mobile App  │  │  Web Portal │  │ Partner API │                  │    │
-│  │  │ (React      │  │  (React.js) │  │  (REST/     │                  │    │
-│  │  │  Native)    │  │             │  │   GraphQL)  │                  │    │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘                  │    │
+│  │  ┌─────────────────┐           ┌─────────────────┐                  │    │
+│  │  │ Mobile Web App  │           │  Admin Panel    │                  │    │
+│  │  │ (React PWA)     │           │  (React.js)     │                  │    │
+│  │  └─────────────────┘           └─────────────────┘                  │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                    │                                        │
 │                                    ▼                                        │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                       API GATEWAY LAYER                             │    │
-│  │  ┌─────────────────────────────────────────────────────────────┐    │    │
-│  │  │  Kong / AWS API Gateway                                     │    │    │
-│  │  │  • Rate limiting  • Auth  • Load balancing  • SSL/TLS       │    │    │
-│  │  └─────────────────────────────────────────────────────────────┘    │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                    │                                        │
-│                                    ▼                                        │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                      MICROSERVICES LAYER                            │    │
-│  │  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────┐           │    │
-│  │  │   User    │ │  Policy   │ │  Trigger  │ │  Payout   │           │    │
-│  │  │  Service  │ │  Service  │ │  Service  │ │  Service  │           │    │
-│  │  │ (Node.js) │ │ (Node.js) │ │ (Python)  │ │ (Node.js) │           │    │
-│  │  └───────────┘ └───────────┘ └───────────┘ └───────────┘           │    │
-│  │  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────┐           │    │
-│  │  │   Data    │ │    AI     │ │  Weather  │ │   Notif   │           │    │
-│  │  │  Ingestion│ │  Engine   │ │  Service  │ │  Service  │           │    │
-│  │  │ (Python)  │ │ (Python)  │ │ (Python)  │ │ (Node.js) │           │    │
-│  │  └───────────┘ └───────────┘ └───────────┘ └───────────┘           │    │
+│  │                      BACKEND (Monolith at launch)                   │    │
+│  │  ┌───────────────────────────────────────────────────────────┐      │    │
+│  │  │  Node.js API Server (Express)                             │      │    │
+│  │  │  • Auth (JWT)  • Rate limiting  • SSL/TLS                 │      │    │
+│  │  │  • User & Policy CRUD  • Payout logic  • Notifications    │      │    │
+│  │  └───────────────────────────────────────────────────────────┘      │    │
+│  │  ┌───────────────────────────────────────────────────────────┐      │    │
+│  │  │  Python AI Service (FastAPI)                              │      │    │
+│  │  │  • Weather risk scoring  • Trigger detection              │      │    │
+│  │  │  • Fraud scoring  • Plan recommendation                   │      │    │
+│  │  └───────────────────────────────────────────────────────────┘      │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                    │                                        │
 │                                    ▼                                        │
