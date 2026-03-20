@@ -37,6 +37,14 @@ FairRoute protects gig workers from sudden income shocks by turning disruption d
 
 FairRoute is faster, fairer, and more practical for delivery workers because it aligns with how they actually work: high-frequency shifts, variable earnings, and urgent need for liquidity during disruptions.
 
+### Why a Mobile App (Not a Website)
+
+- **Workers live on their phones:** Gig delivery workers spend 8–12 hours/day on their phones using Swiggy/Zomato. A mobile-first PWA fits their workflow — no context switching to a browser tab.
+- **Background data collection:** Trigger verification requires GPS, network type, and app activity data. A mobile app can collect this passively; a website cannot.
+- **Push notifications:** Instant payout alerts, trigger warnings, and premium reminders work natively on mobile. Web push is unreliable on budget Android devices.
+- **Voice-first interaction:** Many workers prefer voice over typing. Mobile apps integrate cleanly with STT/TTS for the vernacular AI assistant.
+- **Offline resilience:** A PWA caches key screens and buffers location data locally, critical when workers lose connectivity during bad weather.
+
 ---
 
 ## 2. Persona Scenario
@@ -456,25 +464,24 @@ Workers can view trigger status in real-time:
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1. Weather Risk Scoring (Prophet + XGBoost)
+### 1. Weather Risk Scoring
 
-Predicts whether weather in a zone will cross payout trigger thresholds in the next 6–24 hours.
+- **Model:** Prophet (time-series) + XGBoost (binary classifier)
+- **Goal:** Predict whether weather in a zone will cross payout trigger thresholds in the next 6–24 hours
+- **How it works:**
+  - Prophet forecasts rainfall/temperature for next 24h using IMD historical data
+  - XGBoost takes Prophet's forecast + real-time OpenWeather data → outputs trigger breach probability
+- **Output:** Zone risk score (0–100), trigger probability, trigger type, confidence level
 
-- **Prophet** — trained on 3+ years of IMD historical data per city, handles monsoon seasonality. Outputs predicted rainfall/temperature for next 24h in 3-hour intervals.
-- **XGBoost** — takes Prophet's forecast + real-time OpenWeather data (rainfall, humidity, wind, temp, IMD warning level). Binary classification: will threshold be breached? (yes/no + probability).
-- **Training data:** IMD open archives (2019–2025) mapped against known disruption events. Bengaluru and Mumbai have the densest records.
-- **Output:** zone risk score (0–100), trigger probability, trigger type, confidence level.
+### 2. Zone Activity Anomaly Detection
 
-### 2. Zone Activity Anomaly Detection (Isolation Forest)
-
-At launch we have zero claim data. Isolation Forest (unsupervised) learns "normal" zone activity and flags deviations without labeled examples.
-
-**Pipeline (runs every 30 min):** Collect active/idle worker counts + avg distance per zone via Firebase → compute idle_ratio, activity_vs_baseline, time features → Isolation Forest scores each window (-1 = anomaly, +1 = normal) → cross-validate with weather score:
-- Anomaly + high weather risk → **TRIGGER**
-- Anomaly alone → flag for manual review
-- Weather risk alone → pre-alert (no payout yet)
-
-**Cold start:** Week 1–2 uses rules-only (IMD thresholds). Week 3–6 trains Isolation Forest on accumulating snapshots. Month 2+ full ML scoring. Month 6+ supervised XGBoost replaces Isolation Forest once labeled claim data exists.
+- **Model:** Isolation Forest (unsupervised) — works without labeled claim data at launch
+- **Goal:** Learn "normal" zone activity patterns and flag deviations
+- **Pipeline (every 30 min):**
+  - Collect active/idle worker counts per zone via Firebase
+  - Isolation Forest scores each window → cross-validate with weather score
+  - Anomaly + high weather risk → **TRIGGER** | Anomaly alone → manual review | Weather alone → pre-alert
+- **Cold start:** Rules-only first 2 weeks → Isolation Forest from week 3 → full ML from month 2 → supervised XGBoost from month 6+
 
 ### 3. Trigger Validation Pipeline
 
@@ -482,86 +489,29 @@ Prevents false triggers via 5 sequential checks (real-time, <5 sec):
 
 1. **Data freshness** — Weather data <30 min old, GPS <15 min old
 2. **Threshold breach** — Rainfall >30mm/3hr OR temp >42°C OR govt red alert
-3. **Multi-source agreement** — At least 2 of 3 sources confirm: IMD + OpenWeather + worker idle ratio
+3. **Multi-source agreement** — At least 2 of 3 sources confirm (IMD + OpenWeather + worker idle ratio)
 4. **Worker eligibility** — Policy active, premium paid, GPS in zone, app session active
 5. **Fraud score** — <0.7 approve, 0.7–0.85 approve with flag, >0.85 hold for review
 
-### 4. Plan Recommendation Engine (XGBoost Classifier)
+### 4. Plan Recommendation Engine
 
-XGBoost multi-class classifier recommends Basic/Standard/Premium shield at signup based on risk exposure.
+- **Model:** XGBoost multi-class classifier
+- **Goal:** Recommend Basic/Standard/Premium shield at signup based on risk exposure
+- **Inputs:** City, primary zone, avg daily hours, zone flood/heat risk (IMD historical), monsoon month flag, self-reported income
+- **Output:** Recommended plan + confidence score + human-readable reasoning
+- **Training:** Initially synthetic data from IMD weather × zone risk profiles. Retrained monthly on real conversion data.
 
-**Input features:** city, primary zone (GPS from first 7 days), avg daily hours, peak hour ratio, zone flood/heat risk (IMD historical), monsoon month flag, self-reported income and platform.
+### 5. Vernacular AI Assistant
 
-**Output:** Recommended plan + confidence score + human-readable reasoning (e.g., "Your zone has high flood risk, Standard covers demand drops") + expected monthly payouts.
-
-**Training:** Initially synthetic data from IMD weather patterns × zone risk profiles × pricing tiers. Retrained monthly on actual conversion data once real users onboard.
-
-### 5. Vernacular AI Assistant (STT → Gemini 2.0 Flash → TTS)
-
-**Purpose:** Let workers interact with FairRoute in Hindi, Kannada, Tamil, Telugu, or Marathi — via text or voice — with a context-aware AI that understands their policy, payouts, and zone status.
-
-**Why Gemini 2.0 Flash?** It supports Hindi and other Indian languages natively, costs ~$0.10/1M input tokens (making it ~₹0.01 per query), responds in under 1 second, and can hold full user context in a single prompt — no need for separate intent/entity extraction layers.
-
-**Architecture:**
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│           VERNACULAR AI ASSISTANT PIPELINE                      │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Worker speaks/types in any supported language                   │
-│         │                                                       │
-│         ▼                                                       │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ STEP 1: SPEECH-TO-TEXT                                  │    │
-│  │ Google Cloud Speech-to-Text API v2                      │    │
-│  │ ├─ Supports: hi-IN, kn-IN, ta-IN, te-IN, mr-IN          │    │
-│  │ ├─ Auto language detection (chirp_2 model)               │    │
-│  │ └─ Output: transcribed text + detected_language          │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│         │                                                       │
-│         ▼                                                       │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ STEP 2: CONTEXT INJECTION (server-side)                 │    │
-│  │ Before sending to Gemini, attach user-specific context: │    │
-│  │ ├─ Worker profile (name, zone, plan, premium status)     │    │
-│  │ ├─ Last 5 payouts (date, amount, trigger type)           │    │
-│  │ ├─ Current zone risk score + active triggers             │    │
-│  │ ├─ Policy details (tier, daily cap, hourly rate)         │    │
-│  │ └─ System prompt with FairRoute guardrails               │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│         │                                                       │
-│         ▼                                                       │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ STEP 3: GEMINI 2.0 FLASH (via Google AI API)           │    │
-│  │ ├─ Model: gemini-2.0-flash                               │    │
-│  │ ├─ System prompt: "You are FairRoute assistant.          │    │
-│  │ │   Reply in the worker's language. Be concise.          │    │
-│  │ │   Only answer about coverage, payouts, triggers,       │    │
-│  │ │   weather, and plans. Never give financial advice."     │    │
-│  │ ├─ Input: system_prompt + user_context + user_query      │    │
-│  │ ├─ Max output tokens: 200 (keeps responses short)        │    │
-│  │ └─ Output: reply text in worker's detected language      │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│         │                                                       │
-│         ▼                                                       │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ STEP 4: TEXT-TO-SPEECH                                  │    │
-│  │ Google Cloud TTS (WaveNet voices)                       │    │
-│  │ ├─ Voice: language-matched (hi-IN-Wavenet-A, etc.)       │    │
-│  │ ├─ Speaking rate: 0.9x (slightly slower for clarity)     │    │
-│  │ └─ Output: audio stream played in-app                    │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Guardrails (system prompt enforced):**
-- Only answers questions about FairRoute (coverage, payouts, triggers, weather, plans)
-- Never gives financial, legal, or medical advice
-- Refuses off-topic queries: "मैं सिर्फ FairRoute से जुड़े सवालों में मदद कर सकता हूं"
-- Never reveals internal system details, fraud scores, or other workers' data
-- Response capped at 200 tokens to keep replies concise and costs low
+- **Model:** Gemini 2.0 Flash + Google Cloud STT/TTS
+- **Goal:** Let workers interact in Hindi, Kannada, Tamil, Telugu, or Marathi — via text or voice
+- **Why Gemini 2.0 Flash:**
+  - Native Indian language support
+  - ~₹0.01 per query (vs ₹1.50 for GPT-4o)
+  - Sub-second response time
+  - Full user context in a single prompt — no separate intent/entity extraction needed
+- **Pipeline:** Worker speaks/types → Google Cloud STT → context injection (profile, payouts, zone risk) → Gemini Flash → Google Cloud TTS → audio reply
+- **Guardrails:** Only answers FairRoute questions (coverage, payouts, triggers, weather, plans). Never gives financial/legal advice. Response capped at 200 tokens.
 
 ### 6. Fraud Prevention (5-Layer Scoring)
 
@@ -818,11 +768,9 @@ MIT License - See LICENSE file for details
 
 **FairRoute Team**
 
-- Website: [fairroute.in](https://fairroute.in)
-- Contact: Trisha Janath: trishajanath@gmail.com
-- Contact: Neelesh Padmanabh: neelesh2561@gmail.com
-- Contact: Ashwin Tom Shibu: ashwin.astrophilos@gmail.com
-- Twitter: [@FairRouteIndia](https://twitter.com/FairRouteIndia)
+- Trisha Janath: trishajanath@gmail.com
+- Neelesh Padmanabh: neelesh2561@gmail.com
+- Ashwin Tom Shibu: ashwin.astrophilos@gmail.com
 
 ---
 
