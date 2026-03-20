@@ -458,191 +458,43 @@ Workers can view trigger status in real-time:
 
 ### 1. Weather Risk Scoring (Prophet + XGBoost)
 
-**What it actually does:** Predicts whether weather conditions in a specific zone will cross payout trigger thresholds in the next 6–24 hours.
+Predicts whether weather in a zone will cross payout trigger thresholds in the next 6–24 hours.
 
-**Model 1 — Facebook Prophet (Time-Series Forecast):**
-- Trained on 3+ years of IMD historical rainfall/temperature data per city
-- Handles Indian-specific seasonality: monsoon onset (June), retreating monsoon (Oct), western disturbances (Jan–Feb)
-- Outputs: predicted rainfall (mm), predicted temperature (°C) for next 24h in 3-hour intervals
-
-**Model 2 — XGBoost (Threshold Classifier):**
-- Takes Prophet's forecast + real-time OpenWeather data as input
-- Binary classification: will trigger threshold be breached? (yes/no + probability)
-- Features used:
-
-| Feature | Source | Update Frequency |
-|---------|--------|------------------|
-| Predicted rainfall (mm/3hr) | Prophet forecast | Every 3 hours |
-| Current rainfall (mm) | OpenWeather API | Every 15 min |
-| Humidity (%) | OpenWeather API | Every 15 min |
-| Wind speed (km/h) | OpenWeather API | Every 15 min |
-| Temperature (°C) | OpenWeather API | Every 15 min |
-| Day of monsoon season (1-120) | Calendar derived | Daily |
-| Zone flood history score | Static per zone | Monthly update |
-| IMD warning level (0/1/2/3) | IMD RSS scrape | Every 15 min |
-
-**Training Data:** IMD open data archives (2019–2025) mapped against known disruption events per city. Exact sample count depends on city and event frequency — Bengaluru and Mumbai have the densest records.
-
-**Output Example:**
-```
-{
-  "zone": "koramangala_blr",
-  "timestamp": "2026-07-15T14:00:00+05:30",
-  "weather_risk_score": 82,
-  "predicted_rainfall_6h": 45.2,
-  "trigger_probability": 0.87,
-  "trigger_type": "heavy_rainfall",
-  "confidence": "high",
-  "model_version": "weather_v3.1"
-}
-```
+- **Prophet** — trained on 3+ years of IMD historical data per city, handles monsoon seasonality. Outputs predicted rainfall/temperature for next 24h in 3-hour intervals.
+- **XGBoost** — takes Prophet's forecast + real-time OpenWeather data (rainfall, humidity, wind, temp, IMD warning level). Binary classification: will threshold be breached? (yes/no + probability).
+- **Training data:** IMD open archives (2019–2025) mapped against known disruption events. Bengaluru and Mumbai have the densest records.
+- **Output:** zone risk score (0–100), trigger probability, trigger type, confidence level.
 
 ### 2. Zone Activity Anomaly Detection (Isolation Forest)
 
-**Why Isolation Forest?** At launch, FairRoute has zero historical claim data. Isolation Forest is an unsupervised algorithm — it learns what "normal" looks like from worker GPS/activity data and flags deviations without needing labeled examples.
+At launch we have zero claim data. Isolation Forest (unsupervised) learns "normal" zone activity and flags deviations without labeled examples.
 
-**How it works in practice:**
+**Pipeline (runs every 30 min):** Collect active/idle worker counts + avg distance per zone via Firebase → compute idle_ratio, activity_vs_baseline, time features → Isolation Forest scores each window (-1 = anomaly, +1 = normal) → cross-validate with weather score:
+- Anomaly + high weather risk → **TRIGGER**
+- Anomaly alone → flag for manual review
+- Weather risk alone → pre-alert (no payout yet)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│         ZONE ACTIVITY SCORING (runs every 30 minutes)          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Step 1: COLLECT (from FairRoute app via Firebase)              │
-│  ────────────────────────────────────                           │
-│  For each zone, aggregate in 30-min windows:                    │
-│  • active_workers: count of workers with GPS movement > 200m    │
-│  • idle_workers: count of workers stationary > 20 min           │
-│  • avg_distance_covered: mean GPS distance per worker (km)      │
-│  • order_count_reported: sum of manually entered orders         │
-│                                                                 │
-│  Step 2: FEATURE ENGINEERING                                    │
-│  ──────────────────────────                                     │
-│  • idle_ratio = idle_workers / (active + idle)                  │
-│  • activity_vs_baseline = current avg_distance / 30-day avg     │
-│  • hour_of_day (cyclical encoding: sin/cos)                     │
-│  • day_of_week (one-hot)                                        │
-│  • is_peak_hour (binary: 1 if 6–10 PM)                          │
-│                                                                 │
-│  Step 3: SCORE (Isolation Forest, scikit-learn)                 │
-│  ─────────────────────────────────────────                      │
-│  • contamination=0.05 (expect ~5% of windows to be anomalous)  │
-│  • Anomaly score: -1 (anomaly) to +1 (normal)                  │
-│  • Score < -0.3 → potential demand disruption                   │
-│  • Score < -0.6 → strong disruption signal                      │
-│                                                                 │
-│  Step 4: CROSS-VALIDATE with weather score                      │
-│  ──────────────────────────────────────────                     │
-│  • If anomaly_score < -0.3 AND weather_risk > 60 → TRIGGER     │
-│  • If anomaly_score < -0.6 alone → flag for manual review       │
-│  • If only weather_risk > 80 → pre-alert (no payout yet)       │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Cold Start Problem & Solution:**
-
-| Phase | Data Available | Strategy |
-|-------|---------------|----------|
-| Week 1–2 | < 50 workers/zone | Rules-only mode: triggers based purely on weather thresholds (IMD data) |
-| Week 3–6 | Baseline activity forming | Isolation Forest trains on accumulating 30-min zone snapshots |
-| Month 2+ | 1000+ zone snapshots | Full ML scoring active; model retrained weekly on new data |
-| Month 6+ | Labeled claim outcomes | Supervised XGBoost replaces Isolation Forest for demand scoring |
+**Cold start:** Week 1–2 uses rules-only (IMD thresholds). Week 3–6 trains Isolation Forest on accumulating snapshots. Month 2+ full ML scoring. Month 6+ supervised XGBoost replaces Isolation Forest once labeled claim data exists.
 
 ### 3. Trigger Validation Pipeline
 
-**Purpose:** Prevent false triggers by requiring multi-signal agreement before approving a payout.
+Prevents false triggers via 5 sequential checks (real-time, <5 sec):
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              TRIGGER VALIDATION (real-time, < 5 sec)            │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Input: zone_id + trigger_type + timestamp                      │
-│         │                                                       │
-│         ▼                                                       │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ CHECK 1: Data Freshness                                 │    │
-│  │ └─ Weather data < 30 min old? GPS data < 15 min old?    │    │
-│  │    FAIL → reject trigger, log stale_data_error          │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│         │ PASS                                                  │
-│         ▼                                                       │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ CHECK 2: Threshold Breach (rule-based)                  │    │
-│  │ └─ rainfall > 30mm/3hr? OR temp > 42°C? OR              │    │
-│  │    govt_alert == "red"?                                  │    │
-│  │    FAIL → no trigger, continue monitoring               │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│         │ PASS                                                  │
-│         ▼                                                       │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ CHECK 3: Multi-Source Agreement                         │    │
-│  │ └─ At least 2 of 3 must agree:                          │    │
-│  │    [IMD data] + [OpenWeather] + [worker idle ratio]     │    │
-│  │    Agreement score = count(sources confirming) / 3       │    │
-│  │    FAIL if agreement < 0.66                             │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│         │ PASS                                                  │
-│         ▼                                                       │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ CHECK 4: Worker Eligibility (per-worker, SQL query)     │    │
-│  │ └─ Policy active? Premium paid? GPS in zone?             │    │
-│  │    App session active during window?                     │    │
-│  │    FAIL → worker excluded from this trigger's payout    │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│         │ PASS                                                  │
-│         ▼                                                       │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ CHECK 5: Fraud Score (see Section 6.6 below)            │    │
-│  │ └─ fraud_score < 0.7? → APPROVE                         │    │
-│  │    fraud_score 0.7–0.85? → APPROVE with flag            │    │
-│  │    fraud_score > 0.85? → HOLD for manual review          │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│         │                                                       │
-│         ▼                                                       │
-│  Output: { trigger_confirmed: true, severity: 1.2,             │
-│            eligible_workers: [w_id, ...], payout_amounts: [...] }│
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+1. **Data freshness** — Weather data <30 min old, GPS <15 min old
+2. **Threshold breach** — Rainfall >30mm/3hr OR temp >42°C OR govt red alert
+3. **Multi-source agreement** — At least 2 of 3 sources confirm: IMD + OpenWeather + worker idle ratio
+4. **Worker eligibility** — Policy active, premium paid, GPS in zone, app session active
+5. **Fraud score** — <0.7 approve, 0.7–0.85 approve with flag, >0.85 hold for review
 
 ### 4. Plan Recommendation Engine (XGBoost Classifier)
 
-**What it does:** When a worker signs up, recommends Basic/Standard/Premium shield based on their actual risk exposure.
+XGBoost multi-class classifier recommends Basic/Standard/Premium shield at signup based on risk exposure.
 
-**Model:** XGBoost multi-class classifier (3 classes: basic, standard, premium)
+**Input features:** city, primary zone (GPS from first 7 days), avg daily hours, peak hour ratio, zone flood/heat risk (IMD historical), monsoon month flag, self-reported income and platform.
 
-**Input Features (collected during onboarding + first 7 days):**
+**Output:** Recommended plan + confidence score + human-readable reasoning (e.g., "Your zone has high flood risk, Standard covers demand drops") + expected monthly payouts.
 
-| Feature | How It's Collected | Type |
-|---------|-------------------|------|
-| `city` | Registration form | Categorical |
-| `primary_zone` | GPS data from first 7 days | Categorical |
-| `avg_daily_hours` | App tracking (shift start/end) | Float |
-| `peak_hour_ratio` | % of hours during 6–10 PM | Float (0–1) |
-| `zone_flood_risk` | Pre-computed from IMD historical data | Float (0–100) |
-| `zone_heat_risk` | Pre-computed from IMD historical data | Float (0–100) |
-| `monsoon_month` | Binary: is current month June–Sept? | Binary |
-| `self_reported_income` | Onboarding form (₹/week) | Integer |
-| `self_reported_platform` | Swiggy / Zomato / Dunzo / Other | Categorical |
-
-**Output:**
-```
-{
-  "recommended_plan": "standard",
-  "confidence": 0.78,
-  "reasoning": [
-    "Your zone (HSR Layout) has high monsoon flood risk (score: 74/100)",
-    "You work 70% peak hours → higher disruption exposure",
-    "Standard covers demand drops — relevant for your zone's pattern",
-    "At ₹69/week, this is 0.2% of your reported weekly income"
-  ],
-  "expected_monthly_payouts": "₹1,200 – ₹1,800 (based on zone history)"
-}
-```
-
-**Training:** Initially trained on synthetic data generated from IMD weather patterns × zone risk profiles × pricing tiers. Retrained monthly on actual conversion data once real users onboard.
+**Training:** Initially synthetic data from IMD weather patterns × zone risk profiles × pricing tiers. Retrained monthly on actual conversion data once real users onboard.
 
 ### 5. Vernacular AI Assistant (STT → Gemini 2.0 Flash → TTS)
 
