@@ -43,7 +43,6 @@ FairRoute is faster, fairer, and more practical for delivery workers because it 
 - **Background data collection:** Trigger verification requires GPS, network type, and app activity data. A mobile app can collect this passively; a website cannot.
 - **Push notifications:** Instant payout alerts, trigger warnings, and premium reminders work natively on mobile. Web push is unreliable on budget Android devices.
 - **Voice-first interaction:** Many workers prefer voice over typing. Mobile apps integrate cleanly with STT/TTS for the vernacular AI assistant.
-- **Offline resilience:** A PWA caches key screens and buffers location data locally, critical when workers lose connectivity during bad weather.
 
 ---
 
