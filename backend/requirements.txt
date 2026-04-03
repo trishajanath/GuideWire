@@ -4,4 +4,9 @@ pydantic
 apscheduler
 httpx
 pymongo
-google-generativeai
+google-genai
+scikit-learn
+xgboost
+pandas
+numpy
+joblib

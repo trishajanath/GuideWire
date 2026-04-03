@@ -1,139 +1,174 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Star, CloudRain, TrendingDown, MapPin, Zap, ArrowRight } from "lucide-react";
+import { CloudRain, TrendingDown, MapPin, Zap, ArrowRight, Sparkles, Loader2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import MobileShell from "@/components/MobileShell";
-import { updateCurrentUser } from "@/lib/session";
+import { getCurrentUser, updateCurrentUser } from "@/lib/session";
+import { selectPlan as apiSelectPlan, getRecommendedPlan, getPremiumQuote, type PlanRecommendation, type PremiumQuote } from "@/lib/api";
 
-const plans = [
+const planDefs = [
   {
     id: "basic",
     name: "Basic Shield",
-    price: 49,
-    payout: 500,
-    features: [
-      { icon: CloudRain, text: "Weather coverage" },
-      { icon: MapPin, text: "Zone shutdowns" },
-    ],
-    highlighted: false,
+    backendName: "Basic",
+    features: ["Weather coverage", "Zone shutdowns"],
   },
   {
     id: "standard",
     name: "Standard Shield",
-    price: 69,
-    payout: 800,
-    features: [
-      { icon: CloudRain, text: "Weather coverage" },
-      { icon: TrendingDown, text: "Demand drops" },
-      { icon: MapPin, text: "Zone shutdowns" },
-    ],
-    highlighted: true,
+    backendName: "Standard",
+    features: ["Weather coverage", "Demand drops", "Zone shutdowns"],
   },
   {
     id: "premium",
     name: "Premium Shield",
-    price: 99,
-    payout: 1200,
-    features: [
-      { icon: CloudRain, text: "Weather coverage" },
-      { icon: TrendingDown, text: "Demand drops" },
-      { icon: Zap, text: "Heat alerts & outages" },
-    ],
-    highlighted: false,
+    backendName: "Premium",
+    features: ["Weather coverage", "Demand drops", "Heat alerts & outages"],
   },
 ];
 
 const Plans = () => {
   const navigate = useNavigate();
+  const user = getCurrentUser();
   const [selected, setSelected] = useState("standard");
+  const [recommendation, setRecommendation] = useState<PlanRecommendation | null>(null);
+  const [quotes, setQuotes] = useState<Record<string, PremiumQuote>>({});
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSelectPlan = () => {
-    const selectedPlan = plans.find((plan) => plan.id === selected);
-    updateCurrentUser({ selectedPlan: selectedPlan?.name ?? "Standard Shield" });
+  useEffect(() => {
+    getRecommendedPlan(6, 50)
+      .then((rec) => {
+        setRecommendation(rec);
+        const match = planDefs.find(
+          (p) => p.id === rec.recommended_plan || p.name.toLowerCase().includes(rec.recommended_plan),
+        );
+        if (match) setSelected(match.id);
+      })
+      .catch(() => {});
+  }, []);
+
+  /* Fetch dynamic pricing for each plan based on user city */
+  const userCity = user?.city ?? "";
+  useEffect(() => {
+    Promise.all(
+      planDefs.map((p) =>
+        getPremiumQuote(p.backendName, userCity)
+          .then((q) => ({ id: p.id, quote: q }))
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      const map: Record<string, PremiumQuote> = {};
+      results.forEach((r) => { if (r) map[r.id] = r.quote; });
+      setQuotes(map);
+    });
+  }, [userCity]);
+
+  const handleSelectPlan = async () => {
+    const selectedPlan = planDefs.find((p) => p.id === selected);
+    const planName = selectedPlan?.name ?? "Standard Shield";
+    setSubmitting(true);
+    try {
+      if (user?.backendUserId) {
+        await apiSelectPlan(user.backendUserId, selectedPlan?.backendName ?? "Standard");
+      }
+    } catch {
+      /* proceed anyway */
+    }
+    updateCurrentUser({ selectedPlan: planName });
+    setSubmitting(false);
     navigate("/dashboard");
   };
 
+  const selectedPlanName = planDefs.find((p) => p.id === selected)?.name ?? "Standard Shield";
+
   return (
     <MobileShell>
-      <div className="flex flex-col min-h-screen px-6 pt-12 pb-8">
-        {/* Progress */}
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-xs font-semibold text-accent-orange">Step 3 of 4</span>
-        </div>
-        <div className="flex gap-2 mb-8">
-          {[0, 1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className={`h-1.5 flex-1 rounded-full ${i <= 2 ? "bg-accent-orange" : "bg-muted"}`}
-            />
-          ))}
-        </div>
+      <div className="flex flex-col h-full md:min-h-0 min-h-screen px-4 pt-10 pb-6">
+          {/* Progress — thin & subtle */}
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-xs font-medium text-muted-foreground">Step 3 of 4</span>
+          </div>
+          <div className="flex gap-1.5 mb-6">
+            {[0, 1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className={`h-1 flex-1 rounded-full ${i <= 2 ? "bg-muted-foreground/40" : "bg-muted"}`}
+              />
+            ))}
+          </div>
 
-        <h2 className="text-xl font-bold text-foreground mb-2">Choose Your Plan</h2>
-        <p className="text-sm text-muted-foreground mb-6">Select coverage that fits your needs</p>
+          <h2 className="text-xl font-extrabold text-foreground mb-1 tracking-tight">Choose Your Plan</h2>
+          <p className="text-sm text-muted-foreground mb-6">Select coverage that fits your needs</p>
 
-        <div className="space-y-4 mb-auto">
-          {plans.map((plan) => (
-            <button
-              key={plan.id}
-              onClick={() => setSelected(plan.id)}
-              className={`w-full text-left rounded-2xl p-5 transition-all ${
-                selected === plan.id
-                  ? "bg-card shadow-card-hover ring-2 ring-accent-orange"
-                  : "bg-card shadow-card"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wide">
-                    {plan.name}
-                  </h3>
-                  {plan.highlighted && (
-                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold gradient-orange text-accent-foreground">
-                      <Star size={10} /> Popular
-                    </span>
-                  )}
-                </div>
-                <div
-                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                    selected === plan.id ? "border-accent-orange" : "border-border"
+          <div className="space-y-2.5 mb-auto">
+            {planDefs.map((plan) => {
+              const isSelected = selected === plan.id;
+              const isRecommended = recommendation?.recommended_plan === plan.id;
+              const q = quotes[plan.id];
+              const price = q?.weekly_premium ?? (plan.id === "basic" ? 49 : plan.id === "standard" ? 69 : 99);
+              const dailyCap = q?.daily_cap ?? (plan.id === "basic" ? 500 : plan.id === "standard" ? 800 : 1200);
+              return (
+                <button
+                  key={plan.id}
+                  onClick={() => setSelected(plan.id)}
+                  className={`w-full text-left rounded-xl px-4 py-3.5 transition-all duration-200 ${
+                    isSelected
+                      ? "bg-[hsl(0_0%_11%)] border border-border/60 shadow-[0_0_0_1px_rgba(255,255,255,0.06),0_4px_24px_rgba(0,0,0,0.4)]"
+                      : "bg-transparent border border-border/30 hover:border-border/50"
                   }`}
                 >
-                  {selected === plan.id && (
-                    <div className="w-3 h-3 rounded-full bg-accent-orange" />
-                  )}
-                </div>
-              </div>
+                  {/* Header: name + badge + check */}
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold text-foreground">
+                        {plan.name}
+                      </h3>
+                      {isRecommended && (
+                        <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-foreground/10 text-muted-foreground">
+                          <Sparkles size={9} /> Recommended
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className={`w-4.5 h-4.5 rounded-full flex items-center justify-center transition-all ${
+                        isSelected
+                          ? "bg-foreground"
+                          : "border border-border/60"
+                      }`}
+                    >
+                      {isSelected && (
+                        <Check size={11} className="text-background" strokeWidth={2.5} />
+                      )}
+                    </div>
+                  </div>
 
-              <div className="flex items-baseline gap-1 mb-3">
-                <span className="text-2xl font-extrabold text-foreground">₹{plan.price}</span>
-                <span className="text-sm text-muted-foreground font-medium">/week</span>
-                <span className="ml-auto text-xs text-muted-foreground">
-                  Max ₹{plan.payout}/day
-                </span>
-              </div>
+                  {/* Price row */}
+                  <div className="flex items-baseline gap-1 mb-2">
+                    <span className="text-lg font-extrabold text-foreground tracking-tight">₹{price}</span>
+                    <span className="text-xs text-muted-foreground font-medium">/week</span>
+                    <span className="ml-auto text-[11px] text-muted-foreground">
+                      Cap ₹{dailyCap}/day
+                    </span>
+                  </div>
 
-              <div className="flex flex-wrap gap-2">
-                {plan.features.map((f) => (
-                  <span
-                    key={f.text}
-                    className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground bg-background px-3 py-1.5 rounded-lg"
-                  >
-                    <f.icon size={12} />
-                    {f.text}
-                  </span>
-                ))}
-              </div>
-            </button>
-          ))}
-        </div>
+                  {/* Features as inline text */}
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    {plan.features.join(" · ")}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
 
-        <Button
-          onClick={handleSelectPlan}
-          className="w-full h-14 text-base font-bold rounded-2xl gradient-orange border-0 text-accent-foreground mt-6"
-        >
-          Select Plan <ArrowRight size={18} className="ml-2" />
-        </Button>
+          {/* Sticky CTA */}
+          <Button
+            onClick={handleSelectPlan}
+            disabled={submitting}
+            className="w-full h-14 text-sm font-bold rounded-2xl bg-foreground border-0 text-background hover:bg-foreground/90 mt-5"
+          >
+            {submitting ? <Loader2 size={16} className="animate-spin mr-2" /> : null}
+            Continue with {selectedPlanName} <ArrowRight size={16} className="ml-2" />
+          </Button>
       </div>
     </MobileShell>
   );

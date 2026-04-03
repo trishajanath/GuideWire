@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import logging
 
-def calculate_zone_activity_score(data: dict) -> dict:
+logger = logging.getLogger("guidewire.zone_activity")
+
+
+def _rule_based_zone_activity(data: dict) -> dict:
+    """Fallback rule-based scorer used when ML model is unavailable."""
     active_workers = int(data.get("active_workers", 0))
     idle_workers = int(data.get("idle_workers", 0))
 
@@ -22,3 +27,17 @@ def calculate_zone_activity_score(data: dict) -> dict:
         "status": status,
         "idle_ratio": idle_ratio,
     }
+
+
+def calculate_zone_activity_score(data: dict) -> dict:
+    """Score zone activity using Isolation Forest, falling back to rules."""
+    try:
+        from ml.zone_model import predict
+
+        result = predict(data)
+        if result is not None:
+            return result
+    except Exception as exc:
+        logger.debug("ML zone model unavailable, using rules: %s", exc)
+
+    return _rule_based_zone_activity(data)

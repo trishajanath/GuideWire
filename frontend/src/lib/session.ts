@@ -6,6 +6,8 @@ export type FairRouteUser = {
   selectedPlan?: string;
   upiId?: string;
   aadhaarVerified?: boolean;
+  backendUserId?: number;
+  zoneId?: string;
 };
 
 const USER_STORAGE_KEY = "fairroute_user";

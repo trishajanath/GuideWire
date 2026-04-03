@@ -21,31 +21,29 @@ const KYC = () => {
 
   return (
     <MobileShell>
-      <div className="flex flex-col min-h-screen px-6 pt-12 pb-8">
+      <div className="flex flex-col h-full md:min-h-0 min-h-screen px-4 pt-10 pb-6">
         {/* Progress */}
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-1.5">
           <span className="text-xs font-semibold text-accent-orange">Step 2 of 4</span>
         </div>
-        <div className="flex gap-2 mb-8">
+        <div className="flex gap-2 mb-5">
           <div className="h-1.5 flex-1 rounded-full bg-accent-orange" />
           <div className="h-1.5 flex-1 rounded-full bg-accent-orange" />
           <div className="h-1.5 flex-1 rounded-full bg-muted" />
           <div className="h-1.5 flex-1 rounded-full bg-muted" />
         </div>
 
-        <h2 className="text-xl font-bold text-foreground mb-2">
+        <h2 className="text-xl font-extrabold text-foreground mb-1 tracking-tight">
           KYC Verification
         </h2>
-        <p className="text-sm text-muted-foreground mb-8">
+        <p className="text-sm text-muted-foreground mb-5">
           Quick verification to activate your coverage
         </p>
 
         {/* Aadhaar Card */}
-        <div className="bg-card rounded-2xl p-5 shadow-card mb-4">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center">
-              <ShieldCheck size={20} className="text-primary-foreground" />
-            </div>
+        <div className="card-premium rounded-xl p-4 mb-3">
+          <div className="flex items-center gap-3 mb-3">
+            <ShieldCheck size={20} className="text-accent-orange" strokeWidth={1.5} />
             <div>
               <h3 className="text-sm font-bold text-foreground">Aadhaar Verification</h3>
               <p className="text-xs text-muted-foreground">Secure verification via DigiLocker</p>
@@ -57,22 +55,20 @@ const KYC = () => {
           <Button
             onClick={() => setAadhaarVerified(true)}
             variant={aadhaarVerified ? "outline" : "default"}
-            className={`w-full h-12 rounded-xl font-semibold ${
+            className={`w-full h-11 rounded-xl font-semibold text-sm ${
               aadhaarVerified
                 ? "border-accent-green text-accent-green"
-                : "gradient-primary border-0 text-primary-foreground"
+                : "bg-foreground border-0 text-background hover:bg-foreground/90"
             }`}
           >
-            {aadhaarVerified ? "✓ Verified" : "Verify with DigiLocker"}
+            {aadhaarVerified ? "Verified" : "Verify with DigiLocker"}
           </Button>
         </div>
 
         {/* Bank Account */}
-        <div className="bg-card rounded-2xl p-5 shadow-card mb-auto">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl gradient-green flex items-center justify-center">
-              <Landmark size={20} className="text-accent-foreground" />
-            </div>
+        <div className="card-premium rounded-xl p-4 mb-auto">
+          <div className="flex items-center gap-3 mb-3">
+            <Landmark size={20} className="text-accent-green" strokeWidth={1.5} />
             <div>
               <h3 className="text-sm font-bold text-foreground">Bank Account / UPI</h3>
               <p className="text-xs text-muted-foreground">For receiving payouts</p>
@@ -82,10 +78,10 @@ const KYC = () => {
             placeholder="Enter UPI ID (e.g., name@upi)"
             value={upiId}
             onChange={(e) => setUpiId(e.target.value)}
-            className="h-12 rounded-xl text-sm font-medium bg-background mb-3"
+            className="h-11 rounded-xl text-sm font-medium bg-secondary mb-2.5"
           />
           <Button
-            className="w-full h-12 rounded-xl font-semibold gradient-green border-0 text-accent-foreground"
+            className="w-full h-11 rounded-xl font-semibold text-sm bg-foreground border-0 text-background hover:bg-foreground/90"
           >
             Link Bank Account
           </Button>
@@ -94,9 +90,9 @@ const KYC = () => {
         {/* Continue */}
         <Button
           onClick={handleContinue}
-          className="w-full h-14 text-base font-bold rounded-2xl gradient-orange border-0 text-accent-foreground mt-6"
+          className="w-full h-12 text-sm font-bold rounded-2xl bg-foreground border-0 text-background hover:bg-foreground/90 mt-4"
         >
-          Continue <ArrowRight size={18} className="ml-2" />
+          Continue <ArrowRight size={16} className="ml-2" />
         </Button>
       </div>
     </MobileShell>

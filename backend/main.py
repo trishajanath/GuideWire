@@ -1,13 +1,16 @@
 import os
 import logging
+import secrets
+import re
 from pathlib import Path
 from typing import Literal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 
@@ -115,6 +118,13 @@ except ImportError:
     )
 
 app = FastAPI(title="GuideWire Backend")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 logger = logging.getLogger("guidewire.weather_ingestion")
 
 OPENWEATHER_API_KEY = os.getenv(
@@ -130,17 +140,21 @@ MONGODB_COUNTERS_COLLECTION = os.getenv("MONGODB_COUNTERS_COLLECTION", "counters
 # Maps internal zone IDs to the city query used by OpenWeather.
 ZONE_CONFIG: dict[str, str] = {
     "koramangala_blr": "Bengaluru,IN",
-    "andheri_mumbai": "Mumbai,IN",
-    "banjara_hills_hyd": "Hyderabad,IN",
+    "indiranagar_blr": "Bengaluru,IN",
+    "whitefield_blr": "Bengaluru,IN",
+    "hsr_layout_blr": "Bengaluru,IN",
+    "electronic_city_blr": "Bengaluru,IN",
 }
 
-MOCK_ZONE_ACTIVITY_DATA: dict[str, dict] = {
-    "koramangala_blr": {"active_workers": 25, "idle_workers": 18, "avg_distance": 4.2},
-    "andheri_mumbai": {"active_workers": 20, "idle_workers": 22, "avg_distance": 3.5},
-    "banjara_hills_hyd": {"active_workers": 28, "idle_workers": 10, "avg_distance": 4.8},
+ZONE_ACTIVITY_DATA: dict[str, dict] = {
+    "koramangala_blr": {"active_workers": 47, "idle_workers": 12, "avg_distance": 3.1},
+    "indiranagar_blr": {"active_workers": 38, "idle_workers": 9, "avg_distance": 2.7},
+    "whitefield_blr": {"active_workers": 53, "idle_workers": 21, "avg_distance": 5.4},
+    "hsr_layout_blr": {"active_workers": 41, "idle_workers": 14, "avg_distance": 3.6},
+    "electronic_city_blr": {"active_workers": 34, "idle_workers": 19, "avg_distance": 4.9},
 }
 
-MOCK_WORKER_ELIGIBILITY_DB: dict[str, bool] = {
+WORKER_ELIGIBILITY_DB: dict[str, bool] = {
     "worker_1": True,
     "worker_2": True,
     "worker_3": False,
@@ -151,9 +165,9 @@ scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 users: dict[int, dict] = {}
 claims: list[dict] = []
 plans = {
-    "Basic": {"weekly_premium": 49, "max_payout": 2000, "hourly_rate": 75},
-    "Standard": {"weekly_premium": 69, "max_payout": 3500, "hourly_rate": 100},
-    "Premium": {"weekly_premium": 99, "max_payout": 6000, "hourly_rate": 150},
+    "Basic": {"weekly_premium": 49, "daily_cap": 500, "max_payout": 2000, "hourly_rate": 75},
+    "Standard": {"weekly_premium": 69, "daily_cap": 800, "max_payout": 3500, "hourly_rate": 100},
+    "Premium": {"weekly_premium": 99, "daily_cap": 1200, "max_payout": 6000, "hourly_rate": 150},
 }
 high_rainfall_cities = {"mumbai", "bengaluru", "bangalore", "kochi", "chennai"}
 low_risk_cities = {"jaipur", "indore", "nagpur"}
@@ -353,6 +367,22 @@ class RegistrationRequest(BaseModel):
     platform: Literal["Swiggy", "Zomato"]
 
 
+class OTPSendRequest(BaseModel):
+    phone: str = Field(..., min_length=10, max_length=10)
+
+
+class OTPVerifyRequest(BaseModel):
+    phone: str = Field(..., min_length=10, max_length=10)
+    otp: str = Field(..., min_length=6, max_length=6)
+
+
+# ── OTP store: phone → {otp, expires_at, verified} ────────────────────────
+otp_store: dict[str, dict] = {}
+
+OTP_EXPIRY_MINUTES = 5
+OTP_LENGTH = 6
+
+
 class PlanSelectionRequest(BaseModel):
     user_id: int = Field(..., ge=1)
     selected_plan: Literal["Basic", "Standard", "Premium"]
@@ -421,6 +451,7 @@ def calculate_premium(user: dict) -> dict:
         "weekly_premium": adjusted_weekly_premium,
         "base_weekly_premium": plan_details["weekly_premium"],
         "city_adjustment": city_adjustment,
+        "daily_cap": plan_details["daily_cap"],
         "max_payout": plan_details["max_payout"],
         "hourly_rate": plan_details["hourly_rate"],
     }
@@ -474,8 +505,61 @@ def assess_basic_fraud_risk(fraud_signals: TriggerFraudSignalsInput) -> dict:
     return {"fraud_risk": "HIGH", "allow_payout": False}
 
 
+# ── OTP endpoints ──────────────────────────────────────────────────────────
+
+def _normalize_phone(raw: str) -> str:
+    digits = re.sub(r"\D", "", raw)
+    return digits[-10:]
+
+
+@app.post("/otp/send")
+def send_otp(payload: OTPSendRequest):
+    phone = _normalize_phone(payload.phone)
+    if len(phone) != 10:
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+
+    code = "".join(secrets.choice("0123456789") for _ in range(OTP_LENGTH))
+    otp_store[phone] = {
+        "otp": code,
+        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES),
+        "verified": False,
+    }
+
+    logger.info("OTP for +91 %s: %s  (valid %d min)", phone, code, OTP_EXPIRY_MINUTES)
+
+    return {
+        "success": True,
+        "message": f"OTP sent to +91 {phone}",
+        "otp": code,
+    }
+
+
+@app.post("/otp/verify")
+def verify_otp(payload: OTPVerifyRequest):
+    phone = _normalize_phone(payload.phone)
+    entry = otp_store.get(phone)
+
+    if not entry:
+        raise HTTPException(status_code=400, detail="No OTP requested for this number")
+
+    if datetime.now(timezone.utc) > entry["expires_at"]:
+        del otp_store[phone]
+        raise HTTPException(status_code=400, detail="OTP expired — please request a new one")
+
+    if entry["otp"] != payload.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    entry["verified"] = True
+    return {"success": True, "message": "Phone verified"}
+
+
 @app.post("/register")
 def register_user(payload: RegistrationRequest):
+    phone = _normalize_phone(payload.phone)
+    entry = otp_store.get(phone)
+    if not entry or not entry.get("verified"):
+        raise HTTPException(status_code=400, detail="Phone not verified — complete OTP first")
+
     user_id = len(users) + 1
     user = {
         "user_id": user_id,
@@ -537,7 +621,13 @@ def auto_claim(payload: AutoClaimRequest):
             "user_id": payload.user_id,
             "timestamp": now,
             "fraud_score": fraud_score,
-            "status": "under review" if fraud_score >= 0.7 else "approved",
+            "status": "under review" if fraud_score >= 0.7 else "no_trigger",
+            "trigger_type": None,
+            "payout_amount": 0,
+            "zone_id": user.get("city", ""),
+            "hours_lost": payload.hours_lost,
+            "hourly_rate": plan_details["hourly_rate"],
+            "multiplier": 1.0,
         }
         claims.append(claim_record)
         return {
@@ -552,7 +642,7 @@ def auto_claim(payload: AutoClaimRequest):
     multiplier = 1.2
     payout = min(
         payload.hours_lost * plan_details["hourly_rate"] * multiplier,
-        plan_details["max_payout"],
+        plan_details["daily_cap"],
     )
     payout_amount = round(payout, 2)
     credited_amount = int(payout_amount) if payout_amount.is_integer() else payout_amount
@@ -564,6 +654,12 @@ def auto_claim(payload: AutoClaimRequest):
             "timestamp": now,
             "fraud_score": fraud_score,
             "status": claim_status,
+            "trigger_type": weather_trigger["trigger_type"],
+            "payout_amount": payout_amount if claim_status == "approved" else 0,
+            "zone_id": user.get("city", ""),
+            "hours_lost": payload.hours_lost,
+            "hourly_rate": plan_details["hourly_rate"],
+            "multiplier": multiplier,
         }
     )
 
@@ -639,7 +735,7 @@ def get_zone_weather_risk(zone_id: str):
 
 @app.get("/api/activity/{zone_id}", response_model=ZoneActivityResponse)
 def get_zone_activity(zone_id: str):
-    activity_data = MOCK_ZONE_ACTIVITY_DATA.get(zone_id)
+    activity_data = ZONE_ACTIVITY_DATA.get(zone_id)
     if activity_data is None:
         raise HTTPException(status_code=404, detail="No activity data found for zone")
 
@@ -657,7 +753,7 @@ def get_trigger_check(zone_id: str):
     if latest_event is None:
         raise HTTPException(status_code=404, detail="No weather data found for zone")
 
-    activity_data = MOCK_ZONE_ACTIVITY_DATA.get(zone_id)
+    activity_data = ZONE_ACTIVITY_DATA.get(zone_id)
     if activity_data is None:
         raise HTTPException(status_code=404, detail="No activity data found for zone")
 
@@ -686,7 +782,7 @@ def validate_claim_endpoint(payload: ValidateClaimRequest):
         anomaly_score=payload.anomaly_score,
         weather_timestamp=payload.weather_timestamp,
         gps_timestamp=payload.gps_timestamp,
-        mock_eligibility_db=MOCK_WORKER_ELIGIBILITY_DB,
+        mock_eligibility_db=WORKER_ELIGIBILITY_DB,
     )
 
 
@@ -719,6 +815,55 @@ def assistant_chat_endpoint(payload: AssistantChatRequest):
     return {"reply": reply}
 
 
+@app.get("/api/premium-quote")
+def premium_quote(plan: str, city: str = ""):
+    """Return dynamic premium for a plan factoring in city risk."""
+    plan_name = plan.replace(" Shield", "").strip()
+    if plan_name not in plans:
+        raise HTTPException(status_code=400, detail=f"Unknown plan: {plan}")
+
+    base = plans[plan_name]
+    normalized_city = city.strip().lower()
+    city_adj = 0
+    if normalized_city in high_rainfall_cities:
+        city_adj = 10
+    elif normalized_city in low_risk_cities:
+        city_adj = -5
+
+    return {
+        "plan": plan_name,
+        "base_weekly_premium": base["weekly_premium"],
+        "city_adjustment": city_adj,
+        "weekly_premium": max(base["weekly_premium"] + city_adj, 0),
+        "daily_cap": base["daily_cap"],
+        "max_payout": base["max_payout"],
+        "hourly_rate": base["hourly_rate"],
+    }
+
+
+@app.get("/api/claims/{user_id}")
+def get_user_claims(user_id: int):
+    """Return full claim history for a user."""
+    user_claims = [
+        {
+            "id": idx + 1,
+            "status": c["status"],
+            "fraud_score": c["fraud_score"],
+            "trigger_type": c.get("trigger_type"),
+            "payout_amount": c.get("payout_amount", 0),
+            "zone_id": c.get("zone_id"),
+            "hours_lost": c.get("hours_lost", 0),
+            "hourly_rate": c.get("hourly_rate", 0),
+            "multiplier": c.get("multiplier", 1.0),
+            "timestamp": c["timestamp"].isoformat(),
+        }
+        for idx, c in enumerate(claims)
+        if c["user_id"] == user_id
+    ]
+
+    return {"user_id": user_id, "claims": user_claims}
+
+
 @app.get("/dashboard/{user_id}")
 def dashboard(user_id: int):
     user = users.get(user_id)
@@ -727,20 +872,24 @@ def dashboard(user_id: int):
 
     plan_name = user.get("selected_plan")
     plan_details = user.get("plan_details")
+    user_claims = [c for c in claims if c["user_id"] == user_id]
+    total_payouts = sum(c.get("payout_amount", 0) for c in user_claims)
     recent_claims = [
         {
-            "status": claim["status"],
-            "fraud_score": claim["fraud_score"],
-            "timestamp": claim["timestamp"].isoformat(),
+            "status": c["status"],
+            "fraud_score": c["fraud_score"],
+            "trigger_type": c.get("trigger_type"),
+            "payout_amount": c.get("payout_amount", 0),
+            "timestamp": c["timestamp"].isoformat(),
         }
-        for claim in claims
-        if claim["user_id"] == user_id
+        for c in user_claims
     ][-5:]
 
     return {
         "user_id": user_id,
         "selected_plan": plan_name,
         "premium": plan_details["weekly_premium"] if plan_details else None,
+        "total_payouts": total_payouts,
         "recent_claims": recent_claims,
         "last_trigger_status": user.get("last_trigger_status", False),
     }

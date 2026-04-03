@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import logging
 
-def calculate_weather_risk(data: dict) -> dict:
+logger = logging.getLogger("guidewire.weather_risk")
+
+
+def _rule_based_weather_risk(data: dict) -> dict:
+    """Fallback rule-based scorer used when ML models are unavailable."""
     risk_score = 0
     breached_rules: list[tuple[str, int]] = []
 
@@ -40,3 +45,17 @@ def calculate_weather_risk(data: dict) -> dict:
         "trigger_probability": trigger_probability,
         "trigger_type": trigger_type,
     }
+
+
+def calculate_weather_risk(data: dict) -> dict:
+    """Score weather risk using XGBoost model, falling back to rules."""
+    try:
+        from ml.weather_model import predict
+
+        result = predict(data)
+        if result is not None:
+            return result
+    except Exception as exc:
+        logger.debug("ML weather model unavailable, using rules: %s", exc)
+
+    return _rule_based_weather_risk(data)

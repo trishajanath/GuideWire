@@ -12,9 +12,9 @@ const sidebarItems = [
 ];
 
 const activeTriggers = [
-  { event: "Heavy Rain", zone: "Mumbai — Andheri", workers: 342, payout: "₹2.4L" },
-  { event: "Zone Closure", zone: "Delhi — Connaught Place", workers: 128, payout: "₹89K" },
-  { event: "Heatwave", zone: "Hyderabad — Madhapur", workers: 215, payout: "₹1.6L" },
+  { event: "Heavy Rain", zone: "Bengaluru — Koramangala", workers: 342, payout: "₹2.4L" },
+  { event: "Zone Closure", zone: "Bengaluru — Whitefield", workers: 128, payout: "₹89K" },
+  { event: "Heatwave", zone: "Bengaluru — Electronic City", workers: 215, payout: "₹1.6L" },
 ];
 
 const recentPayouts = [
@@ -29,7 +29,7 @@ const AdminDashboard = () => {
   return (
     <div className="min-h-screen bg-background flex">
       {/* Sidebar */}
-      <aside className="hidden lg:flex flex-col w-64 gradient-primary text-primary-foreground">
+      <aside className="hidden lg:flex flex-col w-64 bg-card border-r border-border text-foreground">
         <div className="p-6 flex items-center gap-3">
           <img src={logo} alt="FairRoute" className="w-10 h-10" />
           <div>
@@ -43,8 +43,8 @@ const AdminDashboard = () => {
               key={item.label}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${
                 item.active
-                  ? "bg-white/15 text-primary-foreground"
-                  : "text-primary-foreground/70 hover:bg-white/10"
+                  ? "bg-accent-orange/15 text-accent-orange"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
               }`}
             >
               <item.icon size={18} />
@@ -53,7 +53,7 @@ const AdminDashboard = () => {
           ))}
         </nav>
         <div className="p-3">
-          <button className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-primary-foreground/70 hover:bg-white/10">
+          <button className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
             <LogOut size={18} />
             Logout
           </button>
@@ -78,7 +78,7 @@ const AdminDashboard = () => {
           {/* Stats Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             {[
-              { label: "Active Workers", value: "12,847", icon: Users, color: "gradient-primary" },
+              { label: "Active Workers", value: "12,847", icon: Users, color: "gradient-orange" },
               { label: "Active Triggers", value: "3", icon: AlertTriangle, color: "bg-warning" },
               { label: "Today's Payouts", value: "₹4.89L", icon: IndianRupee, color: "gradient-green" },
               { label: "Premium Revenue", value: "₹6.29L", icon: TrendingUp, color: "gradient-orange" },
@@ -89,7 +89,7 @@ const AdminDashboard = () => {
                     {stat.label}
                   </span>
                   <div className={`w-9 h-9 rounded-xl ${stat.color} flex items-center justify-center`}>
-                    <stat.icon size={16} className="text-primary-foreground" />
+                    <stat.icon size={16} className="text-white" />
                   </div>
                 </div>
                 <p className="text-2xl font-extrabold text-foreground">{stat.value}</p>

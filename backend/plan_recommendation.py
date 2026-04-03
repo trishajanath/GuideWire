@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import logging
 
-def recommend_plan(avg_daily_hours: float, zone_risk: float) -> dict:
+logger = logging.getLogger("guidewire.plan_recommendation")
+
+
+def _rule_based_recommend(avg_daily_hours: float, zone_risk: float) -> dict:
+    """Fallback rule-based recommender used when ML model is unavailable."""
     reasoning: list[str] = []
 
     if avg_daily_hours > 8:
@@ -34,3 +39,17 @@ def recommend_plan(avg_daily_hours: float, zone_risk: float) -> dict:
         "confidence": confidence,
         "reasoning": reasoning,
     }
+
+
+def recommend_plan(avg_daily_hours: float, zone_risk: float) -> dict:
+    """Recommend a plan using XGBoost model, falling back to rules."""
+    try:
+        from ml.plan_model import predict
+
+        result = predict(avg_daily_hours, zone_risk)
+        if result is not None:
+            return result
+    except Exception as exc:
+        logger.debug("ML plan model unavailable, using rules: %s", exc)
+
+    return _rule_based_recommend(avg_daily_hours, zone_risk)

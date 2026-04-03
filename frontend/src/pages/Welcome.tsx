@@ -1,14 +1,14 @@
 import { useNavigate } from "react-router-dom";
-import { Shield, Zap, IndianRupee, CloudRain } from "lucide-react";
+import { Shield, Zap, IndianRupee, CloudRain, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import MobileShell from "@/components/MobileShell";
 import logo from "@/assets/fairroute-logo.png";
 
 const features = [
-  { icon: Zap, text: "Automatic payouts" },
-  { icon: Shield, text: "No manual claims" },
-  { icon: IndianRupee, text: "Affordable weekly premiums" },
-  { icon: CloudRain, text: "Weather & demand coverage" },
+  { icon: Zap, text: "Automatic payouts", desc: "Instant when triggers fire" },
+  { icon: Shield, text: "No manual claims", desc: "Zero-touch processing" },
+  { icon: IndianRupee, text: "Affordable premiums", desc: "Starting at ₹49/week" },
+  { icon: CloudRain, text: "Full coverage", desc: "Weather, demand & zones" },
 ];
 
 const Welcome = () => {
@@ -16,47 +16,41 @@ const Welcome = () => {
 
   return (
     <MobileShell>
-      <div className="flex flex-col min-h-screen px-6 pt-12 pb-8">
-        {/* Logo */}
-        <div className="flex flex-col items-center mb-8 animate-slide-up">
-          <img src={logo} alt="FairRoute" className="w-20 h-20 mb-4" />
-          <h1 className="text-2xl font-extrabold text-primary tracking-tight">
+      <div className="flex flex-col h-full px-4 pt-14 pb-8 md:min-h-0 min-h-screen">
+        {/* Logo + Hero */}
+        <div className="flex flex-col items-center mb-6 animate-slide-up">
+          <img src={logo} alt="FairRoute" className="w-16 h-16 mb-3" />
+          <h1 className="text-2xl font-extrabold text-foreground tracking-tight">
             FairRoute
           </h1>
-        </div>
-
-        {/* Hero */}
-        <div className="text-center mb-8 animate-slide-up" style={{ animationDelay: "0.1s" }}>
-          <h2 className="text-xl font-bold text-foreground mb-3 leading-tight">
-            Income Protection for<br />Gig Workers
-          </h2>
-          <p className="text-muted-foreground text-sm leading-relaxed max-w-xs mx-auto">
-            Automatic payouts when rain, heatwaves or low demand affects your income.
+          <p className="text-sm text-muted-foreground mt-2 text-center leading-relaxed max-w-[260px]">
+            Income protection for gig workers. Automatic payouts when disruptions hit.
           </p>
         </div>
 
         {/* Features */}
-        <div className="space-y-3 mb-auto animate-slide-up" style={{ animationDelay: "0.2s" }}>
+        <div className="space-y-1 flex-1 animate-slide-up" style={{ animationDelay: "0.15s" }}>
           {features.map((f) => (
             <div
               key={f.text}
-              className="flex items-center gap-4 bg-card rounded-xl p-4 shadow-card"
+              className="flex items-center gap-4 rounded-xl px-4 py-3"
             >
-              <div className="w-10 h-10 rounded-lg gradient-orange flex items-center justify-center flex-shrink-0">
-                <f.icon size={20} className="text-accent-foreground" />
+              <f.icon size={20} className="text-muted-foreground flex-shrink-0" strokeWidth={1.5} />
+              <div className="min-w-0">
+                <span className="text-sm font-semibold text-foreground block">{f.text}</span>
+                <span className="text-[11px] text-muted-foreground">{f.desc}</span>
               </div>
-              <span className="text-sm font-semibold text-foreground">{f.text}</span>
             </div>
           ))}
         </div>
 
         {/* CTA */}
-        <div className="mt-8 space-y-3 animate-slide-up" style={{ animationDelay: "0.3s" }}>
+        <div className="mt-6 space-y-3 animate-slide-up" style={{ animationDelay: "0.3s" }}>
           <Button
             onClick={() => navigate("/register")}
-            className="w-full h-14 text-base font-bold rounded-2xl gradient-orange border-0 text-accent-foreground shadow-lg"
+            className="w-full h-14 text-base font-bold rounded-2xl bg-foreground border-0 text-background hover:bg-foreground/90"
           >
-            Get Started
+            Get Started <ArrowRight size={18} className="ml-2" />
           </Button>
           <button
             onClick={() => navigate("/login")}

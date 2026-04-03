@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-import google.generativeai as genai
+from google import genai
 
 
 def _fallback_assistant_reply(user_query: str, language: str) -> str:
@@ -35,8 +35,7 @@ def generate_assistant_reply(user_query: str, language: str) -> str:
         return _fallback_assistant_reply(user_query, language)
 
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        client = genai.Client(api_key=api_key)
 
         system_prompt = (
             "You are the FairRoute assistant. "
@@ -52,7 +51,13 @@ def generate_assistant_reply(user_query: str, language: str) -> str:
             "Keep the answer under 60 words."
         )
 
-        response = model.generate_content([system_prompt, user_prompt])
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=user_prompt,
+            config=genai.types.GenerateContentConfig(
+                system_instruction=system_prompt,
+            ),
+        )
         text = (response.text or "").strip()
         if text:
             return text
