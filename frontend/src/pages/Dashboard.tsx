@@ -1,15 +1,29 @@
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Shield, Activity, IndianRupee, Bell } from "lucide-react";
 import MobileShell from "@/components/MobileShell";
 import BottomNav from "@/components/BottomNav";
+import { getCurrentUser } from "@/lib/session";
 
 const Dashboard = () => {
+  const navigate = useNavigate();
+  const user = getCurrentUser();
+  const firstName = user?.name?.split(" ")[0] ?? "there";
+  const selectedPlan = user?.selectedPlan ?? "Standard Shield";
+
+  useEffect(() => {
+    if (!user) {
+      navigate("/login");
+    }
+  }, [navigate, user]);
+
   return (
     <MobileShell>
       <div className="px-6 pt-10 pb-24">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-xl font-bold text-foreground">Hi Ramesh 👋</h1>
+            <h1 className="text-xl font-bold text-foreground">Hi {firstName} 👋</h1>
             <p className="text-sm text-muted-foreground">Welcome back!</p>
           </div>
           <button className="w-10 h-10 rounded-full bg-card shadow-card flex items-center justify-center relative">
@@ -26,7 +40,7 @@ const Dashboard = () => {
               Your Coverage
             </span>
           </div>
-          <h2 className="text-lg font-bold mb-1">Standard Shield</h2>
+          <h2 className="text-lg font-bold mb-1">{selectedPlan}</h2>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-accent-green animate-pulse-gentle" />

@@ -4,6 +4,7 @@ import { Smartphone, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import MobileShell from "@/components/MobileShell";
+import { saveCurrentUser } from "@/lib/session";
 
 const Register = () => {
   const navigate = useNavigate();
@@ -13,6 +14,39 @@ const Register = () => {
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
   const [platform] = useState("Swiggy");
+
+  const handleSendOtp = () => {
+    const normalizedPhone = phone.replace(/\D/g, "").slice(-10);
+    if (normalizedPhone.length !== 10) {
+      return;
+    }
+
+    setPhone(normalizedPhone);
+    setStep("otp");
+  };
+
+  const handleVerifyOtp = () => {
+    if (otp.length !== 6) {
+      return;
+    }
+
+    setStep("profile");
+  };
+
+  const handleContinue = () => {
+    if (!name.trim() || !city.trim() || phone.length !== 10) {
+      return;
+    }
+
+    saveCurrentUser({
+      name: name.trim(),
+      phone,
+      city: city.trim(),
+      platform,
+      selectedPlan: "Standard Shield",
+    });
+    navigate("/kyc");
+  };
 
   return (
     <MobileShell>
@@ -56,7 +90,7 @@ const Register = () => {
               />
             </div>
             <Button
-              onClick={() => setStep("otp")}
+              onClick={handleSendOtp}
               className="w-full h-14 text-base font-bold rounded-2xl gradient-orange border-0 text-accent-foreground"
             >
               Send OTP <ArrowRight size={18} className="ml-2" />
@@ -93,7 +127,7 @@ const Register = () => {
               ))}
             </div>
             <Button
-              onClick={() => setStep("profile")}
+              onClick={handleVerifyOtp}
               className="w-full h-14 text-base font-bold rounded-2xl gradient-orange border-0 text-accent-foreground"
             >
               Verify <ArrowRight size={18} className="ml-2" />
@@ -135,7 +169,7 @@ const Register = () => {
               </div>
             </div>
             <Button
-              onClick={() => navigate("/kyc")}
+              onClick={handleContinue}
               className="w-full h-14 text-base font-bold rounded-2xl gradient-orange border-0 text-accent-foreground"
             >
               Continue <ArrowRight size={18} className="ml-2" />

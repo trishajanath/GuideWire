@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Shield, Star, CloudRain, TrendingDown, MapPin, Zap, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import MobileShell from "@/components/MobileShell";
+import { updateCurrentUser } from "@/lib/session";
 
 const plans = [
   {
@@ -45,6 +46,12 @@ const plans = [
 const Plans = () => {
   const navigate = useNavigate();
   const [selected, setSelected] = useState("standard");
+
+  const handleSelectPlan = () => {
+    const selectedPlan = plans.find((plan) => plan.id === selected);
+    updateCurrentUser({ selectedPlan: selectedPlan?.name ?? "Standard Shield" });
+    navigate("/dashboard");
+  };
 
   return (
     <MobileShell>
@@ -122,7 +129,7 @@ const Plans = () => {
         </div>
 
         <Button
-          onClick={() => navigate("/dashboard")}
+          onClick={handleSelectPlan}
           className="w-full h-14 text-base font-bold rounded-2xl gradient-orange border-0 text-accent-foreground mt-6"
         >
           Select Plan <ArrowRight size={18} className="ml-2" />

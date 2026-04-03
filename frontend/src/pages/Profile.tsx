@@ -2,6 +2,7 @@ import { User, ArrowLeft, Shield, CreditCard, HelpCircle, LogOut, ChevronRight }
 import { useNavigate } from "react-router-dom";
 import MobileShell from "@/components/MobileShell";
 import BottomNav from "@/components/BottomNav";
+import { clearCurrentUser, formatIndianPhone, getCurrentUser } from "@/lib/session";
 
 const menuItems = [
   { icon: Shield, label: "My Plan", desc: "Standard Shield" },
@@ -11,6 +12,12 @@ const menuItems = [
 
 const Profile = () => {
   const navigate = useNavigate();
+  const user = getCurrentUser();
+
+  const handleLogout = () => {
+    clearCurrentUser();
+    navigate("/");
+  };
 
   return (
     <MobileShell>
@@ -28,9 +35,11 @@ const Profile = () => {
             <User size={24} className="text-primary-foreground" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-foreground">Ramesh Kumar</h2>
-            <p className="text-sm text-muted-foreground">+91 98765 43210</p>
-            <p className="text-xs text-accent-orange font-semibold">Swiggy • Bangalore</p>
+            <h2 className="text-base font-bold text-foreground">{user?.name ?? "Guest User"}</h2>
+            <p className="text-sm text-muted-foreground">{formatIndianPhone(user?.phone ?? "")}</p>
+            <p className="text-xs text-accent-orange font-semibold">
+              {user?.platform ?? "Platform"} • {user?.city ?? "City"}
+            </p>
           </div>
         </div>
 
@@ -52,7 +61,7 @@ const Profile = () => {
           ))}
         </div>
 
-        <button className="w-full bg-destructive/10 rounded-2xl p-4 flex items-center gap-4">
+        <button onClick={handleLogout} className="w-full bg-destructive/10 rounded-2xl p-4 flex items-center gap-4">
           <LogOut size={18} className="text-destructive" />
           <span className="text-sm font-bold text-destructive">Logout</span>
         </button>

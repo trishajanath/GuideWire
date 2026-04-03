@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pydantic
+apscheduler
+httpx
+pymongo
+google-generativeai

@@ -4,11 +4,20 @@ import { ShieldCheck, Landmark, ArrowRight, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import MobileShell from "@/components/MobileShell";
+import { updateCurrentUser } from "@/lib/session";
 
 const KYC = () => {
   const navigate = useNavigate();
   const [aadhaarVerified, setAadhaarVerified] = useState(false);
   const [upiId, setUpiId] = useState("");
+
+  const handleContinue = () => {
+    updateCurrentUser({
+      aadhaarVerified,
+      upiId: upiId.trim(),
+    });
+    navigate("/plans");
+  };
 
   return (
     <MobileShell>
@@ -84,7 +93,7 @@ const KYC = () => {
 
         {/* Continue */}
         <Button
-          onClick={() => navigate("/plans")}
+          onClick={handleContinue}
           className="w-full h-14 text-base font-bold rounded-2xl gradient-orange border-0 text-accent-foreground mt-6"
         >
           Continue <ArrowRight size={18} className="ml-2" />
