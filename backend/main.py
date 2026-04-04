@@ -2,6 +2,7 @@ import os
 import logging
 import secrets
 import re
+import hashlib
 from pathlib import Path
 from typing import Literal
 from datetime import datetime, timezone, timedelta
@@ -186,6 +187,8 @@ scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 
 users: dict[int, dict] = {}
 claims: list[dict] = []
+policies: dict[int, dict] = {}
+policy_history: dict[int, list[dict]] = {}
 plans = {
     "Basic": {"weekly_premium": 49, "daily_cap": 500, "max_payout": 2000, "hourly_rate": 75},
     "Standard": {"weekly_premium": 69, "daily_cap": 800, "max_payout": 3500, "hourly_rate": 100},
@@ -464,6 +467,14 @@ class PlanSelectionRequest(BaseModel):
     selected_plan: Literal["Basic", "Standard", "Premium"]
 
 
+class PolicyUpgradeRequest(BaseModel):
+    tier: Literal["Basic", "Standard", "Premium"]
+
+
+class PolicyPauseRequest(BaseModel):
+    days: int = Field(default=7, ge=1, le=30)
+
+
 class AutoClaimRequest(BaseModel):
     user_id: int = Field(..., ge=1)
     hours_lost: float = Field(..., gt=0)
@@ -519,6 +530,21 @@ class CityWeatherResponse(BaseModel):
     trigger_type: str
 
 
+class ZoneSafetyItem(BaseModel):
+    id: str
+    city: str
+    area: str
+    weather_risk_score: int
+    trigger_probability: float
+    trigger_type: str
+    safety_level: Literal["Low", "Medium", "High"]
+
+
+class ZoneSafetyResponse(BaseModel):
+    city: str
+    zones: list[ZoneSafetyItem]
+
+
 class IMDAlertRequest(BaseModel):
     zone: str = Field(..., min_length=1)
     alert_level: Literal["green", "yellow", "orange", "red"]
@@ -535,6 +561,28 @@ class IMDAlertResponse(BaseModel):
 
 class IMDAlertHistoryResponse(BaseModel):
     alerts: list[IMDAlertResponse]
+
+
+class PolicyResponse(BaseModel):
+    worker_id: int
+    tier: Literal["Basic", "Standard", "Premium"]
+    status: Literal["active", "paused", "cancelled"]
+    start_date: str
+    next_renewal_date: str
+    paused_until: str | None = None
+    updated_at: str
+
+
+class PolicyHistoryItem(BaseModel):
+    id: str
+    worker_id: int
+    action: Literal["created", "pause", "resume", "upgrade", "cancel"]
+    detail: str
+    timestamp: str
+
+
+class PolicyHistoryResponse(BaseModel):
+    history: list[PolicyHistoryItem]
 
 
 def _zone_candidates(zone: str) -> list[str]:
@@ -634,6 +682,121 @@ def _normalize_city_display(city: str) -> str:
     if not normalized:
         return "Bengaluru"
     return " ".join(word.capitalize() for word in normalized.split())
+
+
+def _zone_slug(city: str, area: str) -> str:
+    return (
+        f"{city.lower().replace(' ', '_')}_{area.lower().replace(' ', '_').replace('.', '').replace(',', '')}"
+    )
+
+
+def _zone_microclimate_adjustment(city: str, area: str) -> dict[str, float]:
+    """Create deterministic zone-level weather variation from city baseline."""
+    digest = hashlib.sha256(f"{city.lower()}::{area.lower()}".encode("utf-8")).digest()
+
+    def spread(byte_val: int, low: float, high: float) -> float:
+        ratio = byte_val / 255.0
+        return low + (high - low) * ratio
+
+    return {
+        "rainfall_mult": spread(digest[0], 0.75, 1.35),
+        "temp_delta": spread(digest[1], -1.8, 1.8),
+        "humidity_delta": spread(digest[2], -8.0, 8.0),
+        "wind_delta": spread(digest[3], -3.0, 3.0),
+    }
+
+
+def _zone_weather_risk_from_city_response(city_weather: dict, city: str, area: str) -> dict:
+    adjustment = _zone_microclimate_adjustment(city=city, area=area)
+    risk = calculate_weather_risk(
+        {
+            "rainfall": max(0.0, float(city_weather["rainfall"]) * adjustment["rainfall_mult"]),
+            "temperature": float(city_weather["temperature"]) + adjustment["temp_delta"],
+            "humidity": max(0.0, float(city_weather["humidity"]) + adjustment["humidity_delta"]),
+            "wind_speed": max(0.0, float(city_weather["wind_speed"]) + adjustment["wind_delta"]),
+        }
+    )
+
+    area_alert = _get_latest_alert_for_context(area)
+    city_alert = _get_latest_alert_for_context(city)
+    risk = _apply_imd_adjustment_to_risk(risk, area_alert or city_alert)
+
+    score = int(risk["weather_risk_score"])
+    level: Literal["Low", "Medium", "High"]
+    if score > 60:
+        level = "High"
+    elif score > 30:
+        level = "Medium"
+    else:
+        level = "Low"
+
+    return {
+        "weather_risk_score": score,
+        "trigger_probability": float(risk["trigger_probability"]),
+        "trigger_type": str(risk["trigger_type"]),
+        "safety_level": level,
+    }
+
+
+def _append_policy_history(worker_id: int, action: str, detail: str) -> None:
+    history = policy_history.setdefault(worker_id, [])
+    history.insert(
+        0,
+        {
+            "id": f"{action}_{int(datetime.now(timezone.utc).timestamp() * 1000)}",
+            "worker_id": worker_id,
+            "action": action,
+            "detail": detail,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    if len(history) > 100:
+        del history[100:]
+
+
+def _get_user_policy_tier(user: dict) -> Literal["Basic", "Standard", "Premium"]:
+    selected_plan = str(user.get("selected_plan") or "Standard")
+    normalized = selected_plan.replace(" Shield", "").strip().capitalize()
+    if normalized not in {"Basic", "Standard", "Premium"}:
+        return "Standard"
+    return normalized
+
+
+def _ensure_policy(worker_id: int) -> dict:
+    existing = policies.get(worker_id)
+    if existing is not None:
+        return existing
+
+    user = users.get(worker_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    now = datetime.now(timezone.utc)
+    tier = _get_user_policy_tier(user)
+    created = {
+        "worker_id": worker_id,
+        "tier": tier,
+        "status": "active",
+        "start_date": now.isoformat(),
+        "next_renewal_date": (now + timedelta(days=7)).isoformat(),
+        "paused_until": None,
+        "updated_at": now.isoformat(),
+    }
+    policies[worker_id] = created
+    _append_policy_history(worker_id, "created", f"Policy created in {tier} tier")
+    return created
+
+
+def _sync_policy_from_user(worker_id: int) -> None:
+    user = users.get(worker_id)
+    if user is None:
+        return
+    policy = _ensure_policy(worker_id)
+    tier = _get_user_policy_tier(user)
+    if policy.get("tier") != tier:
+        policy["tier"] = tier
+        policy["updated_at"] = datetime.now(timezone.utc).isoformat()
+        _append_policy_history(worker_id, "upgrade", f"Upgraded policy to {tier}")
 
 
 def calculate_fraud_score(user_id: int, zone_id: str = "", weather_risk: int = 0, anomaly_score: float = 0.0, trigger_active: bool = False) -> dict:
@@ -772,12 +935,75 @@ def select_plan(payload: PlanSelectionRequest):
     user["selected_plan"] = payload.selected_plan
     plan_details = calculate_premium(user)
     user["plan_details"] = plan_details
+    _sync_policy_from_user(payload.user_id)
 
     return {
         "user_id": payload.user_id,
         "selected_plan": payload.selected_plan,
         "plan_details": plan_details,
     }
+
+
+@app.get("/policy/{worker_id}", response_model=PolicyResponse)
+def get_policy(worker_id: int):
+    policy = _ensure_policy(worker_id)
+
+    if policy.get("status") == "paused" and policy.get("paused_until"):
+        paused_until = datetime.fromisoformat(policy["paused_until"])
+        now = datetime.now(timezone.utc)
+        if paused_until <= now:
+            policy["status"] = "active"
+            policy["paused_until"] = None
+            policy["updated_at"] = now.isoformat()
+            _append_policy_history(worker_id, "resume", "Auto-resumed after pause window ended")
+
+    return policy
+
+
+@app.post("/policy/{worker_id}/pause", response_model=PolicyResponse)
+def pause_worker_policy(worker_id: int, payload: PolicyPauseRequest):
+    policy = _ensure_policy(worker_id)
+    now = datetime.now(timezone.utc)
+    policy["status"] = "paused"
+    policy["paused_until"] = (now + timedelta(days=payload.days)).isoformat()
+    policy["updated_at"] = now.isoformat()
+    _append_policy_history(worker_id, "pause", f"Coverage paused for {payload.days} days")
+    return policy
+
+
+@app.post("/policy/{worker_id}/resume", response_model=PolicyResponse)
+def resume_worker_policy(worker_id: int):
+    policy = _ensure_policy(worker_id)
+    now = datetime.now(timezone.utc)
+    policy["status"] = "active"
+    policy["paused_until"] = None
+    policy["updated_at"] = now.isoformat()
+    _append_policy_history(worker_id, "resume", "Coverage resumed")
+    return policy
+
+
+@app.post("/policy/{worker_id}/upgrade", response_model=PolicyResponse)
+def upgrade_worker_policy(worker_id: int, payload: PolicyUpgradeRequest):
+    policy = _ensure_policy(worker_id)
+    now = datetime.now(timezone.utc)
+    policy["tier"] = payload.tier
+    policy["status"] = "active"
+    policy["paused_until"] = None
+    policy["updated_at"] = now.isoformat()
+
+    user = users.get(worker_id)
+    if user is not None:
+        user["selected_plan"] = payload.tier
+        user["plan_details"] = calculate_premium(user)
+
+    _append_policy_history(worker_id, "upgrade", f"Upgraded policy to {payload.tier}")
+    return policy
+
+
+@app.get("/policy/{worker_id}/history", response_model=PolicyHistoryResponse)
+def get_policy_history(worker_id: int):
+    _ensure_policy(worker_id)
+    return {"history": policy_history.get(worker_id, [])}
 
 
 @app.get("/trigger/weather/{user_id}")
@@ -1219,6 +1445,40 @@ async def city_weather(city: str):
     response["trigger_probability"] = float(adjusted_risk["trigger_probability"])
     response["trigger_type"] = str(adjusted_risk["trigger_type"])
     return response
+
+
+@app.get("/api/city/zone-safety", response_model=ZoneSafetyResponse)
+async def city_zone_safety(city: str, areas: str = ""):
+    normalized_city = _normalize_city_display(city)
+    payload = await fetch_openweather_payload(normalized_city)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="No weather data found for city")
+
+    city_weather = build_city_weather_response(normalized_city, payload)
+
+    area_list = [a.strip() for a in areas.split(",") if a.strip()]
+    if not area_list:
+        area_list = generate_city_zone_suggestions(city=normalized_city, limit=len(ZONE_CONFIG))
+
+    zones: list[ZoneSafetyItem] = []
+    for area in area_list:
+        risk = _zone_weather_risk_from_city_response(city_weather, normalized_city, area)
+        zones.append(
+            ZoneSafetyItem(
+                id=_zone_slug(normalized_city, area),
+                city=normalized_city,
+                area=area,
+                weather_risk_score=risk["weather_risk_score"],
+                trigger_probability=risk["trigger_probability"],
+                trigger_type=risk["trigger_type"],
+                safety_level=risk["safety_level"],
+            )
+        )
+
+    return {
+        "city": normalized_city,
+        "zones": zones,
+    }
 
 
 @app.get("/api/premium-quote")

@@ -72,6 +72,23 @@ export interface CityWeather {
 export const getCityWeather = (city: string) =>
   request<CityWeather>(`/api/city/weather?city=${encodeURIComponent(city)}`);
 
+export interface CityZoneSafety {
+  id: string;
+  city: string;
+  area: string;
+  weather_risk_score: number;
+  trigger_probability: number;
+  trigger_type: string;
+  safety_level: "Low" | "Medium" | "High";
+}
+
+export const getCityZoneSafety = (city: string, areas: string[]) => {
+  const areaParam = encodeURIComponent(areas.join(","));
+  return request<{ city: string; zones: CityZoneSafety[] }>(
+    `/api/city/zone-safety?city=${encodeURIComponent(city)}&areas=${areaParam}`,
+  );
+};
+
 export interface IMDAlert {
   zone: string;
   alert_level: "green" | "yellow" | "orange" | "red";

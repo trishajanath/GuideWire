@@ -7,9 +7,11 @@ import { getCurrentUser } from "@/lib/session";
 import {
   getCityWeather,
   getCityZones,
+  getCityZoneSafety,
   getIMDAlert,
   type CityWeather,
   type CityZone,
+  type CityZoneSafety,
   type IMDAlert,
 } from "@/lib/api";
 
@@ -27,21 +29,42 @@ const Weather = () => {
 
   const [weather, setWeather] = useState<CityWeather | null>(null);
   const [zones, setZones] = useState<CityZone[]>([]);
+  const [zoneSafety, setZoneSafety] = useState<CityZoneSafety[]>([]);
   const [imdAlert, setImdAlert] = useState<IMDAlert | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    Promise.allSettled([
-      getCityWeather(city).then((d) => { if (!cancelled) setWeather(d); }),
-      getCityZones(city).then((d) => { if (!cancelled) setZones(d.zones); }),
-      getIMDAlert(city).then((d) => { if (!cancelled) setImdAlert(d); }).catch(() => null),
-    ])
-      .then((results) => {
-        if (!cancelled && results.every((r) => r.status === "rejected")) setError("No weather data yet");
-      })
-      .finally(() => { if (!cancelled) setLoading(false); });
+    const bootstrap = async () => {
+      const settled = await Promise.allSettled([
+        getCityWeather(city).then((d) => {
+          if (!cancelled) setWeather(d);
+        }),
+        getCityZones(city).then(async (d) => {
+          if (cancelled) return;
+          setZones(d.zones);
+          try {
+            const zoneRisk = await getCityZoneSafety(city, d.zones.map((z) => z.area));
+            if (!cancelled) setZoneSafety(zoneRisk.zones);
+          } catch {
+            if (!cancelled) setZoneSafety([]);
+          }
+        }),
+        getIMDAlert(city)
+          .then((d) => {
+            if (!cancelled) setImdAlert(d);
+          })
+          .catch(() => null),
+      ]);
+
+      if (!cancelled && settled.every((r) => r.status === "rejected")) {
+        setError("No weather data yet");
+      }
+      if (!cancelled) setLoading(false);
+    };
+
+    bootstrap();
     return () => { cancelled = true; };
   }, [city]);
 
@@ -68,6 +91,19 @@ const Weather = () => {
           : "Partly Cloudy";
 
   const allZones = zones;
+  const allZoneSafety = allZones.map((zone) => {
+    const fromApi = zoneSafety.find((s) => s.area.toLowerCase() === zone.area.toLowerCase());
+    if (fromApi) return fromApi;
+    return {
+      id: zone.id,
+      city: zone.city,
+      area: zone.area,
+      weather_risk_score: riskScore,
+      trigger_probability: triggerProb,
+      trigger_type: triggerType,
+      safety_level: riskScore > 60 ? "High" : riskScore > 30 ? "Medium" : "Low",
+    } as CityZoneSafety;
+  });
 
   return (
     <MobileShell>
@@ -170,9 +206,9 @@ const Weather = () => {
               <div className="card-premium rounded-2xl p-5 shadow-card">
                 <h3 className="text-sm font-bold text-foreground mb-4">Zone Safety</h3>
                 <div className="space-y-3">
-                  {allZones.map((zone) => {
-                    const score = riskScore;
-                    const level = score > 60 ? "High" : score > 30 ? "Medium" : "Low";
+                  {allZoneSafety.map((zone) => {
+                    const score = zone.weather_risk_score;
+                    const level = zone.safety_level;
                     const levelColor = score > 60 ? "text-destructive" : score > 30 ? "text-warning" : "text-accent-green";
                     const barColor = score > 60 ? "bg-destructive" : score > 30 ? "bg-warning" : "bg-accent-green";
                     const isCurrentZone = zone.area === zoneName;

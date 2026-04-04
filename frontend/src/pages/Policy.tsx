@@ -1,14 +1,34 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, PauseCircle, PlayCircle, Shield, ArrowUpCircle, History } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  CloudRain,
+  Gauge,
+  Loader2,
+  PauseCircle,
+  PlayCircle,
+  ServerCrash,
+  Thermometer,
+  TrendingDown,
+  TriangleAlert,
+  Wallet,
+  Zap,
+} from "lucide-react";
 import MobileShell from "@/components/MobileShell";
 import BottomNav from "@/components/BottomNav";
 import {
+  assessFraud,
+  getCityWeather,
+  getCityZoneSafety,
   getPolicy,
+  getPremiumQuote,
+  getUserClaims,
   pausePolicy,
   resumePolicyApi,
   selectPlan,
   upgradePolicyApi,
+  type ClaimRecord,
   type PolicyRecord,
 } from "@/lib/api";
 import {
@@ -20,25 +40,53 @@ import {
   type PolicyTier,
   type WorkerPolicy,
 } from "@/lib/policy";
-import { getCurrentUser, updateCurrentUser } from "@/lib/session";
+import { formatIndianPhone, getCurrentUser, updateCurrentUser } from "@/lib/session";
 
-const tierFeatures: Record<PolicyTier, { weeklyPremium: number; maxPayout: number; triggers: string[] }> = {
+type TabKey = "policy" | "payouts" | "profile";
+
+const tierFeatures: Record<
+  PolicyTier,
+  {
+    weeklyPremium: number;
+    dailyCap: number;
+    weeklyCap: number;
+    triggers: Array<"weather" | "zone_shutdown" | "demand_collapse" | "heat_alerts" | "platform_outages">;
+    featureList: string[];
+  }
+> = {
   Basic: {
     weeklyPremium: 49,
-    maxPayout: 1200,
-    triggers: ["Heavy rain", "Heatwave", "City disruption"],
+    dailyCap: 500,
+    weeklyCap: 1200,
+    triggers: ["weather", "heat_alerts"],
+    featureList: ["Weather payout", "Heat disruption", "Daily cap ₹500"],
   },
   Standard: {
     weeklyPremium: 69,
-    maxPayout: 2000,
-    triggers: ["Heavy rain", "Heatwave", "Cyclone alert", "Low-order shock"],
+    dailyCap: 800,
+    weeklyCap: 2200,
+    triggers: ["weather", "zone_shutdown", "heat_alerts", "demand_collapse"],
+    featureList: ["Weather payout", "Zone shutdown", "Demand collapse", "Daily cap ₹800"],
   },
   Premium: {
     weeklyPremium: 99,
-    maxPayout: 3200,
-    triggers: ["Heavy rain", "Heatwave", "Cyclone alert", "Flood risk", "Low-order shock"],
+    dailyCap: 1200,
+    weeklyCap: 3500,
+    triggers: ["weather", "zone_shutdown", "demand_collapse", "heat_alerts", "platform_outages"],
+    featureList: ["All trigger classes", "Priority auto-claim", "Platform outage protection", "Daily cap ₹1200"],
   },
 };
+
+const triggerCatalog: Array<{
+  key: "weather" | "zone_shutdown" | "demand_collapse" | "heat_alerts" | "platform_outages";
+  label: string;
+}> = [
+  { key: "weather", label: "Weather" },
+  { key: "zone_shutdown", label: "Zone Shutdown" },
+  { key: "demand_collapse", label: "Demand Collapse" },
+  { key: "heat_alerts", label: "Heat Alerts" },
+  { key: "platform_outages", label: "Platform Outages" },
+];
 
 const formatDate = (value?: string) => {
   if (!value) return "-";
@@ -51,18 +99,83 @@ const formatDate = (value?: string) => {
   });
 };
 
+const PremiumBreakdown = ({
+  base,
+  zoneAdjustment,
+  monsoonAdjustment,
+  loyaltyDiscount,
+  finalAmount,
+}: {
+  base: number;
+  zoneAdjustment: number;
+  monsoonAdjustment: number;
+  loyaltyDiscount: number;
+  finalAmount: number;
+}) => {
+  const row = (label: string, value: number, positiveMeansRisk = false) => {
+    const isPositive = value >= 0;
+    const color = positiveMeansRisk
+      ? isPositive
+        ? "text-warning"
+        : "text-accent-green"
+      : isPositive
+        ? "text-foreground"
+        : "text-accent-green";
+    return (
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">{label}</span>
+        <span className={`font-semibold ${color}`}>
+          {isPositive ? "+" : "-"}₹{Math.abs(value)}
+        </span>
+      </div>
+    );
+  };
+
+  return (
+    <div className="rounded-xl bg-secondary/40 p-4 mt-4">
+      <p className="text-xs font-semibold text-foreground mb-2">Dynamic Premium Breakdown</p>
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">Base premium</span>
+          <span className="font-semibold text-foreground">₹{base}</span>
+        </div>
+        {row("Zone flood risk adjustment", zoneAdjustment, true)}
+        {row("Monsoon season adjustment", monsoonAdjustment, true)}
+        {row("Loyalty discount", loyaltyDiscount, false)}
+      </div>
+      <div className="h-px bg-border/50 my-2.5" />
+      <div className="flex items-center justify-between text-sm">
+        <span className="font-semibold text-foreground">Final weekly premium</span>
+        <span className="font-extrabold text-foreground">₹{finalAmount}</span>
+      </div>
+    </div>
+  );
+};
+
 const Policy = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
 
   const workerId = user?.backendUserId ?? null;
+  const city = user?.city ?? "Bengaluru";
+  const zoneArea = user?.zoneArea ?? city;
+  const userZoneId = user?.zoneId ?? "";
 
+  const [activeTab, setActiveTab] = useState<TabKey>("policy");
   const [policy, setPolicy] = useState<WorkerPolicy | null>(null);
+  const [claims, setClaims] = useState<ClaimRecord[]>([]);
+  const [trustScore, setTrustScore] = useState<number | null>(null);
+  const [zoneRiskScore, setZoneRiskScore] = useState<number>(0);
+  const [premiumBase, setPremiumBase] = useState<number | null>(null);
+  const [premiumFinal, setPremiumFinal] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [upgradeChoice, setUpgradeChoice] = useState<PolicyTier | null>(null);
 
   useEffect(() => {
-    if (!user || !workerId) {
+    if (!workerId) {
       navigate("/login");
       return;
     }
@@ -73,15 +186,61 @@ const Policy = () => {
       const base = ensurePolicyForCurrentUser();
       if (active) setPolicy(base);
 
-      try {
-        const remote = await getPolicy(workerId);
-        if (!active) return;
-        const mapped: WorkerPolicy = remote;
-        saveLocalPolicy(mapped);
-        setPolicy(mapped);
-      } catch {
-        // Backend policy endpoints may not be available yet; local policy stays source of truth.
-      }
+      const tier = base?.tier ?? "Standard";
+      const tasks = [
+        getPolicy(workerId)
+          .then((remote) => {
+            if (!active) return;
+            const mapped: WorkerPolicy = remote;
+            saveLocalPolicy(mapped);
+            setPolicy(mapped);
+          })
+          .catch(() => null),
+        getUserClaims(workerId)
+          .then((res) => {
+            if (!active) return;
+            setClaims(res.claims ?? []);
+          })
+          .catch(() => null),
+        assessFraud(workerId, userZoneId)
+          .then((fraud) => {
+            if (!active) return;
+            const next = Math.max(0, Math.min(100, 100 - Math.round(fraud.overall_score)));
+            setTrustScore(next);
+          })
+          .catch(() => {
+            if (!active) return;
+            setTrustScore(78);
+          }),
+        getCityZoneSafety(city, [zoneArea])
+          .then((res) => {
+            if (!active) return;
+            const score = res.zones[0]?.weather_risk_score;
+            if (typeof score === "number") setZoneRiskScore(score);
+          })
+          .catch(async () => {
+            try {
+              const w = await getCityWeather(city);
+              if (!active) return;
+              setZoneRiskScore(w.weather_risk_score);
+            } catch {
+              if (!active) return;
+              setZoneRiskScore(25);
+            }
+          }),
+        getPremiumQuote(tier, city)
+          .then((quote) => {
+            if (!active) return;
+            setPremiumBase(quote.base_weekly_premium);
+          })
+          .catch(() => {
+            if (!active) return;
+            setPremiumBase(tierFeatures[tier].weeklyPremium);
+          }),
+      ];
+
+      await Promise.allSettled(tasks);
+      if (active) setLoading(false);
     };
 
     bootstrap();
@@ -89,12 +248,54 @@ const Policy = () => {
     return () => {
       active = false;
     };
-  }, [navigate, user, workerId]);
+  }, [navigate, workerId, city, zoneArea, userZoneId]);
 
-  const details = useMemo(() => {
-    if (!policy) return tierFeatures.Standard;
-    return tierFeatures[policy.tier];
-  }, [policy]);
+  const policyTier = (policy?.tier ?? "Standard") as PolicyTier;
+  const tierDetails = tierFeatures[policyTier];
+
+  const isMonsoon = useMemo(() => {
+    const month = new Date().getMonth() + 1;
+    return month >= 6 && month <= 9;
+  }, []);
+
+  const weeksSinceStart = useMemo(() => {
+    if (!policy?.start_date) return 1;
+    const start = new Date(policy.start_date).getTime();
+    const now = Date.now();
+    const diff = Math.max(0, now - start);
+    return Math.max(1, Math.floor(diff / (7 * 24 * 60 * 60 * 1000)) + 1);
+  }, [policy?.start_date]);
+
+  const premiumBreakdown = useMemo(() => {
+    const base = premiumBase ?? tierDetails.weeklyPremium;
+    const zoneAdjustment = Math.round((zoneRiskScore - 35) / 7);
+    const monsoonAdjustment = isMonsoon ? 8 : -3;
+    const loyaltyDiscount = weeksSinceStart >= 12 ? -10 : weeksSinceStart >= 6 ? -5 : 0;
+    const finalAmount = Math.max(0, base + zoneAdjustment + monsoonAdjustment + loyaltyDiscount);
+    return { base, zoneAdjustment, monsoonAdjustment, loyaltyDiscount, finalAmount };
+  }, [premiumBase, tierDetails.weeklyPremium, zoneRiskScore, isMonsoon, weeksSinceStart]);
+
+  useEffect(() => {
+    setPremiumFinal(premiumBreakdown.finalAmount);
+  }, [premiumBreakdown.finalAmount]);
+
+  const payoutsStats = useMemo(() => {
+    const totalPaid = claims
+      .filter((c) => c.status.toLowerCase() === "paid")
+      .reduce((sum, c) => sum + (c.payout_amount ?? 0), 0);
+    const autoClaims = claims.length;
+    const totalPremiumPaid = weeksSinceStart * (premiumFinal ?? tierDetails.weeklyPremium);
+    const returnRatio = totalPremiumPaid > 0 ? Math.round((totalPaid / totalPremiumPaid) * 100) : 0;
+    return { totalPaid, autoClaims, returnRatio };
+  }, [claims, premiumFinal, tierDetails.weeklyPremium, weeksSinceStart]);
+
+  const trustTier = useMemo(() => {
+    const score = trustScore ?? 0;
+    if (score >= 85) return "Gold";
+    if (score >= 70) return "Silver";
+    if (score >= 50) return "Standard";
+    return "Review";
+  }, [trustScore]);
 
   const doPause = async () => {
     if (!policy || !workerId || policy.status === "paused") return;
@@ -132,146 +333,343 @@ const Policy = () => {
     }
   };
 
-  const doUpgrade = async (nextTier: PolicyTier) => {
-    if (!policy || !workerId || policy.tier === nextTier) return;
+  const confirmUpgrade = async () => {
+    if (!policy || !workerId || !upgradeChoice || policy.tier === upgradeChoice) return;
+
     setIsBusy(true);
     setError(null);
-
-    const selectedPlan = `${nextTier} Shield`;
+    const selectedPlan = `${upgradeChoice} Shield`;
 
     try {
       await selectPlan(workerId, selectedPlan);
       updateCurrentUser({ selectedPlan });
     } catch {
-      // Ignore quote failure; keep local state functional.
+      // Continue with local flow if backend plan sync fails.
     }
 
     try {
-      const remote = await upgradePolicyApi(workerId, nextTier);
+      const remote = await upgradePolicyApi(workerId, upgradeChoice);
       const mapped: WorkerPolicy = remote;
       saveLocalPolicy(mapped);
       setPolicy(mapped);
     } catch {
-      const fallback = upgradePolicyTier(workerId, nextTier);
+      const fallback = upgradePolicyTier(workerId, upgradeChoice);
       if (!fallback) setError("Could not upgrade policy right now.");
       setPolicy(fallback);
     } finally {
+      setUpgradeOpen(false);
+      setUpgradeChoice(null);
       setIsBusy(false);
     }
   };
 
+  const triggerIcon = (triggerType: string | null) => {
+    const value = (triggerType ?? "none").toLowerCase();
+    if (value.includes("rain") || value.includes("weather")) return CloudRain;
+    if (value.includes("heat")) return Thermometer;
+    if (value.includes("zone") || value.includes("flood")) return TriangleAlert;
+    if (value.includes("order") || value.includes("demand")) return TrendingDown;
+    if (value.includes("platform")) return ServerCrash;
+    return Zap;
+  };
+
+  if (loading) {
+    return (
+      <MobileShell>
+        <div className="px-4 pt-10 pb-24 flex items-center justify-center min-h-[60vh]">
+          <Loader2 className="animate-spin text-muted-foreground" size={32} />
+        </div>
+        <BottomNav active="Profile" />
+      </MobileShell>
+    );
+  }
+
   return (
     <MobileShell>
-      <div className="px-4 pt-10 pb-24">
-        <div className="flex items-center gap-3 mb-6">
+      <div className="px-4 pt-10 pb-28">
+        <div className="flex items-center gap-3 mb-5">
           <button onClick={() => navigate(-1)} className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center">
             <ArrowLeft size={18} className="text-foreground" strokeWidth={1.5} />
           </button>
-          <h1 className="text-lg font-extrabold text-foreground tracking-tight">My Policy</h1>
+          <h1 className="text-lg font-extrabold text-foreground tracking-tight">Policy Management</h1>
         </div>
 
-        {policy && (
-          <div className="card-premium rounded-2xl p-6 mb-5 shadow-elevated">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Shield size={16} className="text-muted-foreground" strokeWidth={1.5} />
-                <span className="text-xs text-muted-foreground">Worker Protection Card</span>
+        <div className="grid grid-cols-3 rounded-xl bg-secondary/50 p-1 mb-5">
+          {([
+            ["policy", "My Policy"],
+            ["payouts", "Payouts"],
+            ["profile", "Profile"],
+          ] as Array<[TabKey, string]>).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setActiveTab(key)}
+              className={`rounded-lg py-2 text-xs font-semibold transition-colors ${
+                activeTab === key ? "bg-background text-foreground" : "text-muted-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {error && <p className="text-xs text-destructive mb-3">{error}</p>}
+
+        {activeTab === "policy" && policy && (
+          <>
+            <div className="card-premium rounded-2xl p-5 mb-5 shadow-elevated">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] px-2 py-1 rounded-full bg-secondary text-foreground font-semibold">
+                  {policy.tier} Tier
+                </span>
+                <span className={`text-xs px-2 py-1 rounded-full ${policy.status === "active" ? "bg-accent-green/20 text-accent-green" : "bg-warning/20 text-warning"}`}>
+                  {policy.status === "active" ? "Active" : "Paused"}
+                </span>
               </div>
-              <span className={`text-xs font-semibold ${policy.status === "active" ? "text-accent-green" : "text-warning"}`}>
-                {policy.status.toUpperCase()}
-              </span>
+
+              <p className="text-2xl font-extrabold text-foreground">₹{premiumFinal ?? tierDetails.weeklyPremium}</p>
+              <p className="text-xs text-muted-foreground mt-1">Weekly premium (dynamic)</p>
+
+              <div className="grid grid-cols-2 gap-2 mt-4">
+                <div className="rounded-xl bg-secondary/40 p-3">
+                  <p className="text-[11px] text-muted-foreground">Daily cap</p>
+                  <p className="text-sm font-bold text-foreground mt-1">₹{tierDetails.dailyCap}</p>
+                </div>
+                <div className="rounded-xl bg-secondary/40 p-3">
+                  <p className="text-[11px] text-muted-foreground">Weekly cap</p>
+                  <p className="text-sm font-bold text-foreground mt-1">₹{tierDetails.weeklyCap}</p>
+                </div>
+              </div>
+
+              <PremiumBreakdown
+                base={premiumBreakdown.base}
+                zoneAdjustment={premiumBreakdown.zoneAdjustment}
+                monsoonAdjustment={premiumBreakdown.monsoonAdjustment}
+                loyaltyDiscount={premiumBreakdown.loyaltyDiscount}
+                finalAmount={premiumBreakdown.finalAmount}
+              />
+
+              <div className="mt-4 rounded-xl bg-secondary/40 p-3">
+                <div className="flex items-center justify-between text-xs mb-2">
+                  <span className="text-muted-foreground">Zone risk score</span>
+                  <span className="font-semibold text-foreground">{zoneRiskScore}/100</span>
+                </div>
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${zoneRiskScore > 60 ? "bg-destructive" : zoneRiskScore > 30 ? "bg-warning" : "bg-accent-green"}`}
+                    style={{ width: `${Math.max(2, zoneRiskScore)}%` }}
+                  />
+                </div>
+              </div>
             </div>
 
-            <h2 className="text-xl font-extrabold text-foreground">{policy.tier} Shield</h2>
-            <p className="text-sm text-muted-foreground mt-1">₹{details.weeklyPremium}/week premium</p>
+            <div className="rounded-2xl border border-border/60 p-4 mb-5">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <p className="text-sm font-bold text-foreground">Pause / Resume Coverage</p>
+                <button
+                  onClick={policy.status === "active" ? doPause : doResume}
+                  disabled={isBusy}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${policy.status === "active" ? "bg-secondary text-foreground" : "bg-accent-green/20 text-accent-green"} disabled:opacity-60`}
+                >
+                  {policy.status === "active" ? <PauseCircle size={14} /> : <PlayCircle size={14} />}
+                  {policy.status === "active" ? "Pause" : "Resume"}
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                No penalty applied. Pausing skips this week&apos;s premium deduction.
+              </p>
+              {policy.status === "paused" && policy.paused_until && (
+                <p className="text-xs text-warning mt-2">Paused until {formatDate(policy.paused_until)}</p>
+              )}
+            </div>
 
-            <div className="grid grid-cols-2 gap-3 mt-5 text-xs">
-              <div className="rounded-xl bg-secondary/50 p-3">
-                <p className="text-muted-foreground">Start Date</p>
-                <p className="font-semibold text-foreground mt-1">{formatDate(policy.start_date)}</p>
-              </div>
-              <div className="rounded-xl bg-secondary/50 p-3">
-                <p className="text-muted-foreground">Next Renewal</p>
-                <p className="font-semibold text-foreground mt-1">{formatDate(policy.next_renewal_date)}</p>
-              </div>
-              <div className="rounded-xl bg-secondary/50 p-3 col-span-2">
-                <p className="text-muted-foreground">Weekly Max Payout</p>
-                <p className="font-semibold text-foreground mt-1">₹{details.maxPayout}</p>
+            <div className="rounded-2xl border border-border/60 p-4 mb-5">
+              <p className="text-sm font-bold text-foreground mb-3">Covered Triggers</p>
+              <div className="grid grid-cols-2 gap-2">
+                {triggerCatalog.map((item) => {
+                  const enabled = tierDetails.triggers.includes(item.key);
+                  return (
+                    <div
+                      key={item.key}
+                      className={`rounded-xl px-3 py-2.5 text-xs font-medium ${
+                        enabled ? "bg-secondary text-foreground" : "bg-muted/40 text-muted-foreground"
+                      }`}
+                    >
+                      {item.label}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
-            <div className="mt-5">
-              <p className="text-xs text-muted-foreground mb-2">Covered Trigger Types</p>
-              <div className="flex flex-wrap gap-2">
-                {details.triggers.map((t) => (
-                  <span key={t} className="text-[11px] px-2.5 py-1 rounded-full bg-secondary text-foreground">
-                    {t}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {policy.status === "paused" && policy.paused_until && (
-              <p className="text-xs text-warning mt-4">Paused until {formatDate(policy.paused_until)}</p>
-            )}
-          </div>
+            <button
+              onClick={() => setUpgradeOpen(true)}
+              className="w-full rounded-xl px-4 py-3 bg-secondary text-foreground text-sm font-semibold"
+            >
+              Upgrade Plan
+            </button>
+          </>
         )}
 
-        {error && <p className="text-xs text-destructive mb-4">{error}</p>}
+        {activeTab === "payouts" && (
+          <>
+            <div className="grid grid-cols-3 gap-2 mb-5">
+              <div className="rounded-xl bg-secondary/50 p-3 text-center">
+                <p className="text-[11px] text-muted-foreground">Total paid</p>
+                <p className="text-sm font-extrabold text-accent-green mt-1">₹{payoutsStats.totalPaid}</p>
+              </div>
+              <div className="rounded-xl bg-secondary/50 p-3 text-center">
+                <p className="text-[11px] text-muted-foreground">Auto-claims</p>
+                <p className="text-sm font-extrabold text-foreground mt-1">{payoutsStats.autoClaims}</p>
+              </div>
+              <div className="rounded-xl bg-secondary/50 p-3 text-center">
+                <p className="text-[11px] text-muted-foreground">Return ratio</p>
+                <p className="text-sm font-extrabold text-foreground mt-1">{payoutsStats.returnRatio}%</p>
+              </div>
+            </div>
 
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          <button
-            onClick={doPause}
-            disabled={!policy || isBusy || policy.status === "paused"}
-            className="rounded-xl px-4 py-3 bg-secondary text-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            <PauseCircle size={16} /> Pause 1 Week
-          </button>
-          <button
-            onClick={doResume}
-            disabled={!policy || isBusy || policy.status !== "paused"}
-            className="rounded-xl px-4 py-3 bg-secondary text-foreground text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            <PlayCircle size={16} /> Resume
-          </button>
-        </div>
+            <div className="rounded-2xl border border-border/60 p-4">
+              <p className="text-sm font-bold text-foreground mb-3">Payout History</p>
+              <div className="space-y-2.5">
+                {claims.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No claims yet.</p>
+                )}
+                {claims.map((claim) => {
+                  const Icon = triggerIcon(claim.trigger_type);
+                  const formula = `${claim.hours_lost}h x ₹${claim.hourly_rate} x ${claim.multiplier} = ₹${Math.round(
+                    claim.hours_lost * claim.hourly_rate * claim.multiplier,
+                  )}`;
+                  const paid = claim.status.toLowerCase() === "paid";
+                  return (
+                    <div key={claim.id} className="rounded-xl bg-secondary/40 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Icon size={15} className="text-muted-foreground flex-shrink-0" />
+                          <p className="text-sm font-semibold text-foreground truncate capitalize">
+                            {(claim.trigger_type ?? "system trigger").replace(/_/g, " ")}
+                          </p>
+                        </div>
+                        <span className={`text-[11px] px-2 py-1 rounded-full ${paid ? "bg-accent-green/20 text-accent-green" : "bg-warning/20 text-warning"}`}>
+                          {paid ? "Paid" : "Pending"}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">{formatDate(claim.timestamp)}</p>
+                      <p className="text-[11px] text-muted-foreground mt-1">{formula}</p>
+                      <p className="text-sm font-bold text-foreground mt-1">₹{claim.payout_amount}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
 
-        <div className="rounded-2xl border border-border/60 p-4 mb-4">
-          <div className="flex items-center gap-2 mb-3">
-            <ArrowUpCircle size={16} className="text-muted-foreground" />
-            <h3 className="text-sm font-bold text-foreground">Upgrade Coverage</h3>
-          </div>
-          <p className="text-xs text-muted-foreground mb-4">
-            Switch tier any time. New premium applies immediately for future payouts.
-          </p>
+        {activeTab === "profile" && (
+          <>
+            <div className="rounded-2xl border border-border/60 p-4 mb-5">
+              <p className="text-sm font-bold text-foreground mb-3">Worker Details</p>
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Name</span>
+                  <span className="font-semibold text-foreground">{user?.name ?? "-"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Phone</span>
+                  <span className="font-semibold text-foreground">{formatIndianPhone(user?.phone ?? "")}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Platform</span>
+                  <span className="font-semibold text-foreground">{user?.platform ?? "-"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">City / Zone</span>
+                  <span className="font-semibold text-foreground">{city} / {zoneArea}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Policy start</span>
+                  <span className="font-semibold text-foreground">{formatDate(policy?.start_date)}</span>
+                </div>
+              </div>
+            </div>
 
-          <div className="space-y-2">
-            {(["Basic", "Standard", "Premium"] as PolicyTier[]).map((tier) => {
-              const isCurrent = policy?.tier === tier;
-              return (
-                <button
-                  key={tier}
-                  disabled={isBusy || isCurrent || !policy}
-                  onClick={() => doUpgrade(tier)}
-                  className="w-full rounded-xl px-3 py-3 bg-secondary/60 flex items-center justify-between disabled:opacity-50"
-                >
-                  <span className="text-sm font-semibold text-foreground">{tier} Shield</span>
-                  <span className="text-xs text-muted-foreground">
-                    {isCurrent ? "Current" : `₹${tierFeatures[tier].weeklyPremium}/wk`}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <button
-          onClick={() => navigate("/policy/history")}
-          className="w-full rounded-xl px-4 py-3 bg-secondary text-foreground text-sm font-semibold flex items-center justify-center gap-2"
-        >
-          <History size={16} /> View Policy History
-        </button>
+            <div className="rounded-2xl border border-border/60 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-bold text-foreground">Trust Score</p>
+                <span className="text-xs font-semibold text-foreground">{trustTier}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs mb-2">
+                <span className="text-muted-foreground">Score</span>
+                <span className="font-semibold text-foreground">{trustScore ?? 0}/100</span>
+              </div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${(trustScore ?? 0) >= 85 ? "bg-accent-green" : (trustScore ?? 0) >= 70 ? "bg-emerald-400" : (trustScore ?? 0) >= 50 ? "bg-warning" : "bg-destructive"}`}
+                  style={{ width: `${Math.max(3, trustScore ?? 0)}%` }}
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-2">Updated from fraud engine behavioral checks and payout consistency.</p>
+            </div>
+          </>
+        )}
       </div>
+
+      {upgradeOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-end">
+          <div className="w-full max-w-md mx-auto rounded-t-2xl bg-background border border-border/60 p-4 pb-6">
+            <div className="w-12 h-1 rounded-full bg-muted mx-auto mb-4" />
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-foreground">Upgrade Policy</h3>
+              <button onClick={() => setUpgradeOpen(false)} className="text-xs text-muted-foreground">Close</button>
+            </div>
+
+            <div className="space-y-2 mb-4">
+              {(["Basic", "Standard", "Premium"] as PolicyTier[]).map((tier) => {
+                const isCurrent = policy?.tier === tier;
+                const isSelected = upgradeChoice === tier;
+                return (
+                  <button
+                    key={tier}
+                    disabled={isCurrent}
+                    onClick={() => setUpgradeChoice(tier)}
+                    className={`w-full rounded-xl p-3 text-left border transition-colors ${
+                      isCurrent
+                        ? "border-border/50 bg-muted/40 text-muted-foreground"
+                        : isSelected
+                          ? "border-foreground/40 bg-secondary"
+                          : "border-border/60 bg-secondary/50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-semibold">{tier} Shield</span>
+                      <span className="text-xs">₹{tierFeatures[tier].weeklyPremium}/wk</span>
+                    </div>
+                    <div className="space-y-1">
+                      {tierFeatures[tier].featureList.map((f) => (
+                        <div key={f} className="flex items-center gap-1.5 text-[11px]">
+                          <CheckCircle2 size={12} />
+                          <span>{f}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {isCurrent && <p className="text-[11px] mt-1">Current plan</p>}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={confirmUpgrade}
+              disabled={!upgradeChoice || isBusy || upgradeChoice === policy?.tier}
+              className="w-full rounded-xl py-3 bg-foreground text-background text-sm font-semibold disabled:opacity-50"
+            >
+              {isBusy ? (
+                <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Confirming...</span>
+              ) : (
+                <span className="inline-flex items-center gap-2"><Wallet size={14} /> Confirm Upgrade</span>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
 
       <BottomNav active="Profile" />
     </MobileShell>
