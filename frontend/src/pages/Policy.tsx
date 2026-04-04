@@ -19,17 +19,22 @@ import MobileShell from "@/components/MobileShell";
 import BottomNav from "@/components/BottomNav";
 import {
   assessFraud,
+  calculatePremium,
   getCityWeather,
   getCityZoneSafety,
   getPolicy,
-  getPremiumQuote,
+  getPremiumModelInfo,
+  getPremiumZones,
   getUserClaims,
   pausePolicy,
   resumePolicyApi,
   selectPlan,
   upgradePolicyApi,
   type ClaimRecord,
-  type PolicyRecord,
+  type PremiumAdjustment,
+  type PremiumCalculationResult,
+  type PremiumModelInfo,
+  type PremiumZoneInfo,
 } from "@/lib/api";
 import {
   ensurePolicyForCurrentUser,
@@ -101,36 +106,13 @@ const formatDate = (value?: string) => {
 
 const PremiumBreakdown = ({
   base,
-  zoneAdjustment,
-  monsoonAdjustment,
-  loyaltyDiscount,
+  adjustments,
   finalAmount,
 }: {
   base: number;
-  zoneAdjustment: number;
-  monsoonAdjustment: number;
-  loyaltyDiscount: number;
+  adjustments: PremiumAdjustment[];
   finalAmount: number;
 }) => {
-  const row = (label: string, value: number, positiveMeansRisk = false) => {
-    const isPositive = value >= 0;
-    const color = positiveMeansRisk
-      ? isPositive
-        ? "text-warning"
-        : "text-accent-green"
-      : isPositive
-        ? "text-foreground"
-        : "text-accent-green";
-    return (
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">{label}</span>
-        <span className={`font-semibold ${color}`}>
-          {isPositive ? "+" : "-"}₹{Math.abs(value)}
-        </span>
-      </div>
-    );
-  };
-
   return (
     <div className="rounded-xl bg-secondary/40 p-4 mt-4">
       <p className="text-xs font-semibold text-foreground mb-2">Dynamic Premium Breakdown</p>
@@ -139,9 +121,18 @@ const PremiumBreakdown = ({
           <span className="text-muted-foreground">Base premium</span>
           <span className="font-semibold text-foreground">₹{base}</span>
         </div>
-        {row("Zone flood risk adjustment", zoneAdjustment, true)}
-        {row("Monsoon season adjustment", monsoonAdjustment, true)}
-        {row("Loyalty discount", loyaltyDiscount, false)}
+        {adjustments.map((item) => {
+          const positive = item.direction === "up";
+          const color = positive ? "text-warning" : "text-accent-green";
+          return (
+            <div key={item.label} className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">{item.label}</span>
+              <span className={`font-semibold ${color}`}>
+                {positive ? "+" : "-"}₹{item.amount}
+              </span>
+            </div>
+          );
+        })}
       </div>
       <div className="h-px bg-border/50 my-2.5" />
       <div className="flex items-center justify-between text-sm">
@@ -166,8 +157,9 @@ const Policy = () => {
   const [claims, setClaims] = useState<ClaimRecord[]>([]);
   const [trustScore, setTrustScore] = useState<number | null>(null);
   const [zoneRiskScore, setZoneRiskScore] = useState<number>(0);
-  const [premiumBase, setPremiumBase] = useState<number | null>(null);
-  const [premiumFinal, setPremiumFinal] = useState<number | null>(null);
+  const [premiumResult, setPremiumResult] = useState<PremiumCalculationResult | null>(null);
+  const [premiumModelInfo, setPremiumModelInfo] = useState<PremiumModelInfo | null>(null);
+  const [premiumZones, setPremiumZones] = useState<PremiumZoneInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -185,8 +177,6 @@ const Policy = () => {
     const bootstrap = async () => {
       const base = ensurePolicyForCurrentUser();
       if (active) setPolicy(base);
-
-      const tier = base?.tier ?? "Standard";
       const tasks = [
         getPolicy(workerId)
           .then((remote) => {
@@ -228,15 +218,18 @@ const Policy = () => {
               setZoneRiskScore(25);
             }
           }),
-        getPremiumQuote(tier, city)
-          .then((quote) => {
+        getPremiumModelInfo()
+          .then((info) => {
             if (!active) return;
-            setPremiumBase(quote.base_weekly_premium);
+            setPremiumModelInfo(info);
           })
-          .catch(() => {
+          .catch(() => null),
+        getPremiumZones()
+          .then((res) => {
             if (!active) return;
-            setPremiumBase(tierFeatures[tier].weeklyPremium);
-          }),
+            setPremiumZones(res.zones ?? []);
+          })
+          .catch(() => null),
       ];
 
       await Promise.allSettled(tasks);
@@ -250,13 +243,46 @@ const Policy = () => {
     };
   }, [navigate, workerId, city, zoneArea, userZoneId]);
 
+  useEffect(() => {
+    if (!policy) return;
+
+    let active = true;
+    const computePremium = async () => {
+      const policyStart = policy.start_date ? new Date(policy.start_date) : new Date();
+      const baseWeeklyPremium = tierFeatures[policy.tier].weeklyPremium;
+      const paidClaimsTotal = claims.reduce(
+        (sum, claim) => sum + (claim.status.toLowerCase() === "paid" ? (claim.payout_amount ?? 0) : 0),
+        0,
+      );
+      const weeksOnPolicy = Math.max(1, Math.floor((Date.now() - policyStart.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1);
+      const premiumPaid = Math.max(1, baseWeeklyPremium * weeksOnPolicy);
+      const avgDailyHours = policy.tier === "Basic" ? 5.5 : policy.tier === "Standard" ? 7.0 : 8.5;
+
+      try {
+        const quote = await calculatePremium({
+          zone: zoneArea,
+          plan: policy.tier,
+          month: new Date().getMonth() + 1,
+          tenure_months: Math.max(0, (Date.now() - policyStart.getTime()) / (30 * 24 * 60 * 60 * 1000)),
+          claims_paid: paidClaimsTotal,
+          premium_paid: premiumPaid,
+          avg_daily_hours: avgDailyHours,
+        });
+
+        if (active) setPremiumResult(quote);
+      } catch {
+        if (active) setPremiumResult(null);
+      }
+    };
+
+    computePremium();
+    return () => {
+      active = false;
+    };
+  }, [policy, claims, zoneArea]);
+
   const policyTier = (policy?.tier ?? "Standard") as PolicyTier;
   const tierDetails = tierFeatures[policyTier];
-
-  const isMonsoon = useMemo(() => {
-    const month = new Date().getMonth() + 1;
-    return month >= 6 && month <= 9;
-  }, []);
 
   const weeksSinceStart = useMemo(() => {
     if (!policy?.start_date) return 1;
@@ -267,27 +293,38 @@ const Policy = () => {
   }, [policy?.start_date]);
 
   const premiumBreakdown = useMemo(() => {
-    const base = premiumBase ?? tierDetails.weeklyPremium;
-    const zoneAdjustment = Math.round((zoneRiskScore - 35) / 7);
-    const monsoonAdjustment = isMonsoon ? 8 : -3;
-    const loyaltyDiscount = weeksSinceStart >= 12 ? -10 : weeksSinceStart >= 6 ? -5 : 0;
-    const finalAmount = Math.max(0, base + zoneAdjustment + monsoonAdjustment + loyaltyDiscount);
-    return { base, zoneAdjustment, monsoonAdjustment, loyaltyDiscount, finalAmount };
-  }, [premiumBase, tierDetails.weeklyPremium, zoneRiskScore, isMonsoon, weeksSinceStart]);
+    if (premiumResult) {
+      return {
+        base: premiumResult.base,
+        adjustments: premiumResult.itemised_adjustments,
+        finalAmount: premiumResult.final_premium,
+      };
+    }
 
-  useEffect(() => {
-    setPremiumFinal(premiumBreakdown.finalAmount);
-  }, [premiumBreakdown.finalAmount]);
+    const zoneAmount = Math.abs(Math.round((zoneRiskScore - 35) / 7));
+    const seasonalAmount = 3;
+    const loyaltyAmount = weeksSinceStart >= 6 ? 5 : 0;
+
+    return {
+      base: tierDetails.weeklyPremium,
+      adjustments: [
+        { label: "Zone flood risk adjustment", amount: zoneAmount, direction: zoneRiskScore >= 35 ? "up" : "down" },
+        { label: "Seasonal adjustment", amount: seasonalAmount, direction: "down" },
+        { label: "Loyalty discount", amount: loyaltyAmount, direction: "down" },
+      ] as PremiumAdjustment[],
+      finalAmount: Math.max(0, tierDetails.weeklyPremium + (zoneRiskScore >= 35 ? zoneAmount : -zoneAmount) - seasonalAmount - loyaltyAmount),
+    };
+  }, [premiumResult, tierDetails.weeklyPremium, zoneRiskScore, weeksSinceStart]);
 
   const payoutsStats = useMemo(() => {
     const totalPaid = claims
       .filter((c) => c.status.toLowerCase() === "paid")
       .reduce((sum, c) => sum + (c.payout_amount ?? 0), 0);
     const autoClaims = claims.length;
-    const totalPremiumPaid = weeksSinceStart * (premiumFinal ?? tierDetails.weeklyPremium);
+    const totalPremiumPaid = weeksSinceStart * premiumBreakdown.finalAmount;
     const returnRatio = totalPremiumPaid > 0 ? Math.round((totalPaid / totalPremiumPaid) * 100) : 0;
     return { totalPaid, autoClaims, returnRatio };
-  }, [claims, premiumFinal, tierDetails.weeklyPremium, weeksSinceStart]);
+  }, [claims, premiumBreakdown.finalAmount, weeksSinceStart]);
 
   const trustTier = useMemo(() => {
     const score = trustScore ?? 0;
@@ -296,6 +333,13 @@ const Policy = () => {
     if (score >= 50) return "Standard";
     return "Review";
   }, [trustScore]);
+
+  const coefficientRows = useMemo(() => {
+    const entries = Object.entries(premiumModelInfo?.coefficients ?? {});
+    return entries
+      .map(([feature, value]) => ({ feature, value }))
+      .sort((left, right) => Math.abs(right.value) - Math.abs(left.value));
+  }, [premiumModelInfo]);
 
   const doPause = async () => {
     if (!policy || !workerId || policy.status === "paused") return;
@@ -426,7 +470,7 @@ const Policy = () => {
                 </span>
               </div>
 
-              <p className="text-2xl font-extrabold text-foreground">₹{premiumFinal ?? tierDetails.weeklyPremium}</p>
+              <p className="text-2xl font-extrabold text-foreground">₹{premiumBreakdown.finalAmount}</p>
               <p className="text-xs text-muted-foreground mt-1">Weekly premium (dynamic)</p>
 
               <div className="grid grid-cols-2 gap-2 mt-4">
@@ -442,9 +486,7 @@ const Policy = () => {
 
               <PremiumBreakdown
                 base={premiumBreakdown.base}
-                zoneAdjustment={premiumBreakdown.zoneAdjustment}
-                monsoonAdjustment={premiumBreakdown.monsoonAdjustment}
-                loyaltyDiscount={premiumBreakdown.loyaltyDiscount}
+                adjustments={premiumBreakdown.adjustments}
                 finalAmount={premiumBreakdown.finalAmount}
               />
 
@@ -507,6 +549,53 @@ const Policy = () => {
             >
               Upgrade Plan
             </button>
+
+            <div className="rounded-2xl border border-border/60 p-4 mt-5">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="text-sm font-bold text-foreground">Model Info</p>
+                  <p className="text-[11px] text-muted-foreground">LinearRegression trained on 500 synthetic rows</p>
+                </div>
+                <span className="text-xs font-semibold text-foreground">R² {premiumModelInfo ? premiumModelInfo.r2.toFixed(3) : "-"}</span>
+              </div>
+              {premiumModelInfo ? (
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Intercept</span>
+                    <span className="font-semibold text-foreground">{premiumModelInfo.intercept.toFixed(2)}</span>
+                  </div>
+                  <div className="space-y-1">
+                    {coefficientRows.slice(0, 4).map((row) => (
+                      <div key={row.feature} className="flex items-center justify-between">
+                        <span className="text-muted-foreground capitalize">{row.feature.replace(/_/g, " ")}</span>
+                        <span className="font-semibold text-foreground">{row.value.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">Model metadata loading...</p>
+              )}
+            </div>
+
+            {premiumZones.length > 0 && (
+              <div className="rounded-2xl border border-border/60 p-4 mt-5">
+                <p className="text-sm font-bold text-foreground mb-3">Zone Flood Scores</p>
+                <div className="space-y-2">
+                  {premiumZones.map((zone) => (
+                    <div key={zone.zone} className="rounded-xl bg-secondary/40 p-3">
+                      <div className="flex items-center justify-between gap-2 text-xs mb-2">
+                        <span className="font-semibold text-foreground">{zone.zone}</span>
+                        <span className="text-muted-foreground">Flood {Math.round(zone.flood_score * 100)}/100</span>
+                      </div>
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-warning" style={{ width: `${Math.max(4, zone.flood_score * 100)}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
 

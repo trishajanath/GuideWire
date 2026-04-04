@@ -83,6 +83,23 @@ except ImportError:
     from plan_recommendation import recommend_plan
 
 try:
+    from .premium_engine import (
+        PremiumRequestInput,
+        calculate_premium as calculate_dynamic_premium,
+        get_premium_model_info,
+        get_premium_zones,
+        train_premium_model,
+    )
+except ImportError:
+    from premium_engine import (  # type: ignore
+        PremiumRequestInput,
+        calculate_premium as calculate_dynamic_premium,
+        get_premium_model_info,
+        get_premium_zones,
+        train_premium_model,
+    )
+
+try:
     from .assistant import generate_assistant_reply, generate_city_zone_suggestions
 except ImportError:
     from assistant import generate_assistant_reply, generate_city_zone_suggestions
@@ -410,6 +427,10 @@ async def ingest_weather_events_job() -> None:
 @app.on_event("startup")
 async def start_background_scheduler() -> None:
     init_imd_alerts_table()
+    try:
+        train_premium_model(n_samples=500)
+    except Exception as exc:
+        logger.exception("Premium model training failed at startup: %s", exc)
 
     scheduler.add_job(
         ingest_weather_events_job,
@@ -465,6 +486,54 @@ OTP_LENGTH = 6
 class PlanSelectionRequest(BaseModel):
     user_id: int = Field(..., ge=1)
     selected_plan: Literal["Basic", "Standard", "Premium"]
+
+
+class PremiumCalculateRequest(BaseModel):
+    zone: str = Field(..., min_length=1)
+    plan: Literal["Basic", "Standard", "Premium"]
+    month: int | None = Field(default=None, ge=1, le=12)
+    tenure_months: float = Field(..., ge=0)
+    claims_paid: float = Field(..., ge=0)
+    premium_paid: float = Field(..., gt=0)
+    avg_daily_hours: float = Field(..., ge=0)
+
+
+class PremiumAdjustmentItem(BaseModel):
+    label: str
+    amount: float
+    direction: Literal["up", "down"]
+
+
+class PremiumCalculateResponse(BaseModel):
+    plan: Literal["Basic", "Standard", "Premium"]
+    zone: str
+    base: float
+    final_premium: float
+    premium_adjustment: float
+    itemised_adjustments: list[PremiumAdjustmentItem]
+    risk_score: int
+    explanation: str
+
+
+class PremiumZoneItem(BaseModel):
+    zone: str
+    city: str
+    flood_score: float
+    annual_rainfall_mm: float
+    heat_days_gt_40c: float
+
+
+class PremiumZonesResponse(BaseModel):
+    zones: list[PremiumZoneItem]
+
+
+class PremiumModelInfoResponse(BaseModel):
+    trained_rows: int
+    r2: float
+    intercept: float
+    coefficients: dict[str, float]
+    features: list[str]
+    trained_at: str | None = None
 
 
 class PolicyUpgradeRequest(BaseModel):
@@ -1505,6 +1574,30 @@ def premium_quote(plan: str, city: str = ""):
         "max_payout": base["max_payout"],
         "hourly_rate": base["hourly_rate"],
     }
+
+
+@app.post("/api/premium/calculate", response_model=PremiumCalculateResponse)
+def calculate_dynamic_premium_endpoint(payload: PremiumCalculateRequest):
+    request_input = PremiumRequestInput(
+        zone=payload.zone,
+        plan=payload.plan,
+        month=payload.month or datetime.now(timezone.utc).month,
+        tenure_months=payload.tenure_months,
+        claims_paid=payload.claims_paid,
+        premium_paid=payload.premium_paid,
+        avg_daily_hours=payload.avg_daily_hours,
+    )
+    return calculate_dynamic_premium(request_input)
+
+
+@app.get("/api/premium/zones", response_model=PremiumZonesResponse)
+def get_premium_zones_endpoint():
+    return {"zones": get_premium_zones()}
+
+
+@app.get("/api/premium/model-info", response_model=PremiumModelInfoResponse)
+def get_premium_model_info_endpoint():
+    return get_premium_model_info()
 
 
 @app.get("/api/claims/{user_id}")

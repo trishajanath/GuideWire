@@ -113,6 +113,64 @@ export const getIMDAlert = (zone: string) =>
 export const getRecentIMDAlerts = (limit: number = 30) =>
   request<{ alerts: IMDAlert[] }>(`/api/admin/imd-alerts?limit=${encodeURIComponent(String(limit))}`);
 
+/* ---- Dynamic premium engine ---- */
+
+export interface PremiumAdjustment {
+  label: string;
+  amount: number;
+  direction: "up" | "down";
+}
+
+export interface PremiumCalculationRequest {
+  zone: string;
+  plan: "Basic" | "Standard" | "Premium";
+  month?: number;
+  tenure_months: number;
+  claims_paid: number;
+  premium_paid: number;
+  avg_daily_hours: number;
+}
+
+export interface PremiumCalculationResult {
+  plan: "Basic" | "Standard" | "Premium";
+  zone: string;
+  base: number;
+  final_premium: number;
+  premium_adjustment: number;
+  itemised_adjustments: PremiumAdjustment[];
+  risk_score: number;
+  explanation: string;
+}
+
+export interface PremiumZoneInfo {
+  zone: string;
+  city: string;
+  flood_score: number;
+  annual_rainfall_mm: number;
+  heat_days_gt_40c: number;
+}
+
+export interface PremiumModelInfo {
+  trained_rows: number;
+  r2: number;
+  intercept: number;
+  coefficients: Record<string, number>;
+  features: string[];
+  trained_at?: string | null;
+}
+
+export const calculatePremium = (data: PremiumCalculationRequest) =>
+  request<PremiumCalculationResult>("/api/premium/calculate", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const getPremiumZones = () =>
+  request<{ zones: PremiumZoneInfo[] }>("/api/premium/zones");
+
+export const getPremiumModelInfo = () =>
+  request<PremiumModelInfo>("/api/premium/model-info");
+
 /* ---- Plan selection ---- */
 
 export interface PlanDetails {
