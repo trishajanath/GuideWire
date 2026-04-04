@@ -398,6 +398,7 @@ export const autoClaim = (userId: number, hoursLost: number) =>
 
 export interface ClaimEvaluateTrigger {
   name: string;
+  category: "weather" | "platform" | "external";
   source: "openweather" | "mock";
   fired: boolean;
   status: "fired" | "not-fired";
@@ -452,7 +453,38 @@ export const evaluateClaimEngine = (data: {
   hours_lost: number;
   app_active?: boolean;
   demo_mode?: boolean;
-  demo_scenario?: "none" | "heavy_rain" | "extreme_heat" | "demand_collapse" | "zone_shutdown" | "platform_outage";
+  demo_scenario?:
+    | "none"
+    | "heavy_rain"
+    | "extreme_heat"
+    | "cyclone_alert"
+    | "urban_flooding"
+    | "poor_visibility"
+    | "demand_collapse"
+    | "order_pause"
+    | "zone_shutdown"
+    | "zone_restriction"
+    | "platform_outage"
+    | "curfew"
+    | "public_health_emergency"
+    | "civil_disturbance"
+    | "infrastructure_failure";
+  demo_scenarios?: Array<
+    | "heavy_rain"
+    | "extreme_heat"
+    | "cyclone_alert"
+    | "urban_flooding"
+    | "poor_visibility"
+    | "demand_collapse"
+    | "order_pause"
+    | "zone_shutdown"
+    | "zone_restriction"
+    | "platform_outage"
+    | "curfew"
+    | "public_health_emergency"
+    | "civil_disturbance"
+    | "infrastructure_failure"
+  >;
   simulate_vpn?: boolean;
 }) =>
   request<ClaimEvaluateResult>("/api/claims/evaluate", {

@@ -567,10 +567,37 @@ class ClaimEvaluateRequest(BaseModel):
         "none",
         "heavy_rain",
         "extreme_heat",
+        "cyclone_alert",
+        "urban_flooding",
+        "poor_visibility",
         "demand_collapse",
+        "order_pause",
         "zone_shutdown",
+        "zone_restriction",
         "platform_outage",
+        "curfew",
+        "public_health_emergency",
+        "civil_disturbance",
+        "infrastructure_failure",
     ] = "none"
+    demo_scenarios: list[
+        Literal[
+            "heavy_rain",
+            "extreme_heat",
+            "cyclone_alert",
+            "urban_flooding",
+            "poor_visibility",
+            "demand_collapse",
+            "order_pause",
+            "zone_shutdown",
+            "zone_restriction",
+            "platform_outage",
+            "curfew",
+            "public_health_emergency",
+            "civil_disturbance",
+            "infrastructure_failure",
+        ]
+    ] = Field(default_factory=list)
     simulate_vpn: bool = False
 
 
@@ -605,6 +632,7 @@ class TriggerPayoutResponse(BaseModel):
 
 class ClaimTriggerResponse(BaseModel):
     name: str
+    category: Literal["weather", "platform", "external"]
     source: Literal["openweather", "mock"]
     fired: bool
     status: Literal["fired", "not-fired"]
@@ -625,6 +653,7 @@ class ClaimEvaluateResponse(BaseModel):
     payout_amount: float
     trigger_list: list[ClaimTriggerResponse]
     demo_scenario_applied: str | None = None
+    demo_scenarios_applied: list[str] = Field(default_factory=list)
     explanation: str
     ai_verdict: str | None = None
 
@@ -674,14 +703,14 @@ def _infer_claim_zone_center(zone_id: str, city: str) -> tuple[float, float] | N
     return CLAIM_ZONE_CENTERS.get(normalized_zone) or CLAIM_ZONE_CENTERS.get(normalized_city)
 
 
-async def _get_openweather_metrics(city: str) -> dict[str, float]:
+async def _get_openweather_metrics(city: str) -> dict[str, float | bool]:
     payload = await fetch_openweather_payload(city)
 
     if payload is None:
         normalized = city.strip().lower()
         fallback_rain = float(mock_rainfall_by_city.get(normalized, 0.0))
         fallback_temp = 44.0 if normalized in {"mumbai", "chennai", "delhi"} else 34.0
-        return {"rainfall_mm_per_hr": fallback_rain, "temperature_c": fallback_temp}
+        return {"rainfall_mm_per_hr": fallback_rain, "temperature_c": fallback_temp, "visibility_meters": 2000.0, "urban_flooding": False}
 
     rain = payload.get("rain", {}) if isinstance(payload, dict) else {}
     rainfall_mm = float(rain.get("1h") or 0.0)
@@ -691,6 +720,8 @@ async def _get_openweather_metrics(city: str) -> dict[str, float]:
     return {
         "rainfall_mm_per_hr": rainfall_mm,
         "temperature_c": float(main.get("temp", 0.0)),
+        "visibility_meters": float(payload.get("visibility", 2000.0)) if isinstance(payload, dict) else 2000.0,
+        "urban_flooding": False,
     }
 
 
@@ -720,29 +751,109 @@ def _mock_platform_outage_degraded(zone_id: str) -> bool:
 def _apply_demo_scenario(
     *,
     scenario: str,
-    weather: dict[str, float],
+    weather: dict[str, float | bool],
     demand: dict[str, float],
     zone_shutdown: bool,
     platform_degraded: bool,
-) -> tuple[dict[str, float], dict[str, float], bool, bool]:
+) -> tuple[dict[str, float | bool], dict[str, float], bool, bool, bool, str | None, bool, str | None]:
     next_weather = dict(weather)
     next_demand = dict(demand)
     next_zone_shutdown = zone_shutdown
     next_platform_degraded = platform_degraded
+    next_order_pause = False
+    next_imd_alert_level: str | None = None
+    next_external_event_active = False
+    next_external_event_name: str | None = None
 
     if scenario == "heavy_rain":
         next_weather["rainfall_mm_per_hr"] = 62.0
     elif scenario == "extreme_heat":
         next_weather["temperature_c"] = 46.0
+    elif scenario == "cyclone_alert":
+        next_imd_alert_level = "red"
+    elif scenario == "urban_flooding":
+        next_weather["urban_flooding"] = True
+        next_weather["rainfall_mm_per_hr"] = max(float(next_weather.get("rainfall_mm_per_hr", 0.0)), 48.0)
+    elif scenario == "poor_visibility":
+        next_weather["visibility_meters"] = 80.0
     elif scenario == "demand_collapse":
         next_demand["drop_pct"] = 82.0
         next_demand["current_index"] = round(next_demand["historical_avg"] * 0.18, 2)
+    elif scenario == "order_pause":
+        next_order_pause = True
     elif scenario == "zone_shutdown":
+        next_zone_shutdown = True
+    elif scenario == "zone_restriction":
         next_zone_shutdown = True
     elif scenario == "platform_outage":
         next_platform_degraded = True
+    elif scenario in {"curfew", "public_health_emergency", "civil_disturbance", "infrastructure_failure"}:
+        next_external_event_active = True
+        next_external_event_name = scenario
 
-    return next_weather, next_demand, next_zone_shutdown, next_platform_degraded
+    return (
+        next_weather,
+        next_demand,
+        next_zone_shutdown,
+        next_platform_degraded,
+        next_order_pause,
+        next_imd_alert_level,
+        next_external_event_active,
+        next_external_event_name,
+    )
+
+
+def _apply_demo_scenarios(
+    *,
+    scenarios: list[str],
+    weather: dict[str, float | bool],
+    demand: dict[str, float],
+    zone_shutdown: bool,
+    platform_degraded: bool,
+) -> tuple[dict[str, float | bool], dict[str, float], bool, bool, bool, str | None, bool, str | None]:
+    next_weather = dict(weather)
+    next_demand = dict(demand)
+    next_zone_shutdown = zone_shutdown
+    next_platform_degraded = platform_degraded
+    next_order_pause = False
+    next_imd_alert_level: str | None = None
+    next_external_event_active = False
+    next_external_event_name: str | None = None
+
+    for scenario in scenarios:
+        (
+            next_weather,
+            next_demand,
+            next_zone_shutdown,
+            next_platform_degraded,
+            order_pause_active,
+            imd_alert_level,
+            external_event_active,
+            external_event_name,
+        ) = _apply_demo_scenario(
+            scenario=scenario,
+            weather=next_weather,
+            demand=next_demand,
+            zone_shutdown=next_zone_shutdown,
+            platform_degraded=next_platform_degraded,
+        )
+        next_order_pause = next_order_pause or order_pause_active
+        if imd_alert_level is not None:
+                        next_imd_alert_level = imd_alert_level
+        next_external_event_active = next_external_event_active or external_event_active
+        if external_event_name is not None:
+            next_external_event_name = external_event_name
+
+    return (
+        next_weather,
+        next_demand,
+        next_zone_shutdown,
+        next_platform_degraded,
+        next_order_pause,
+        next_imd_alert_level,
+        next_external_event_active,
+        next_external_event_name,
+    )
 
 
 def _zone_worker_ratio(zone_id: str) -> float:
@@ -831,17 +942,35 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
     demand = _mock_demand_metrics(payload.zone_id)
     zone_shutdown = _mock_zone_shutdown_active(payload.zone_id)
     platform_degraded = _mock_platform_outage_degraded(payload.zone_id)
+    order_pause_active = False
+    external_event_active = False
+    external_event_name: str | None = None
+    simulated_imd_alert_level: str | None = None
 
     applied_scenario: str | None = None
+    applied_scenarios: list[str] = []
+    scenario_bundle = [scenario for scenario in payload.demo_scenarios if scenario != "none"]
     if payload.demo_mode and payload.demo_scenario != "none":
-        weather, demand, zone_shutdown, platform_degraded = _apply_demo_scenario(
-            scenario=payload.demo_scenario,
+        scenario_bundle = [*scenario_bundle, payload.demo_scenario]
+    if payload.demo_mode and scenario_bundle:
+        (
+            weather,
+            demand,
+            zone_shutdown,
+            platform_degraded,
+            order_pause_active,
+            simulated_imd_alert_level,
+            external_event_active,
+            external_event_name,
+        ) = _apply_demo_scenarios(
+            scenarios=list(dict.fromkeys(scenario_bundle)),
             weather=weather,
             demand=demand,
             zone_shutdown=zone_shutdown,
             platform_degraded=platform_degraded,
         )
-        applied_scenario = payload.demo_scenario
+        applied_scenarios = list(dict.fromkeys(scenario_bundle))
+        applied_scenario = applied_scenarios[0] if applied_scenarios else None
 
     # ── VPN / Proxy detection ──────────────────────────────────────────
     client_ip = ""
@@ -880,9 +1009,15 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
         event_timestamp = event_timestamp.astimezone(timezone.utc)
     event_date = event_timestamp.astimezone(timezone.utc).date().isoformat()
 
+    imd_alert = _get_latest_alert_for_context(payload.city)
+    imd_alert_level = str(imd_alert.get("alert_level") if imd_alert else "none")
+    if simulated_imd_alert_level is not None:
+        imd_alert_level = simulated_imd_alert_level
+
     trigger_specs = [
         {
             "name": "heavy_rain",
+            "category": "weather",
             "source": "openweather",
             "fired": weather["rainfall_mm_per_hr"] > 25.0,
             "value": weather["rainfall_mm_per_hr"],
@@ -891,6 +1026,7 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
         },
         {
             "name": "extreme_heat",
+            "category": "weather",
             "source": "openweather",
             "fired": weather["temperature_c"] > 42.0,
             "value": weather["temperature_c"],
@@ -898,7 +1034,35 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             "severity_multiplier": 1.1,
         },
         {
+            "name": "cyclone_alert",
+            "category": "weather",
+            "source": "mock",
+            "fired": imd_alert_level in {"orange", "red"},
+            "value": 1.0 if imd_alert_level in {"orange", "red"} else 0.0,
+            "threshold": 1.0,
+            "severity_multiplier": 1.3,
+        },
+        {
+            "name": "urban_flooding",
+            "category": "weather",
+            "source": "mock",
+            "fired": bool(weather.get("urban_flooding", False)),
+            "value": 1.0 if bool(weather.get("urban_flooding", False)) else 0.0,
+            "threshold": 1.0,
+            "severity_multiplier": 1.4,
+        },
+        {
+            "name": "poor_visibility",
+            "category": "weather",
+            "source": "mock",
+            "fired": float(weather.get("visibility_meters", 2000.0)) < 100.0,
+            "value": float(weather.get("visibility_meters", 2000.0)),
+            "threshold": 100.0,
+            "severity_multiplier": 1.15,
+        },
+        {
             "name": "demand_collapse",
+            "category": "platform",
             "source": "mock",
             "fired": demand["drop_pct"] > 50.0,
             "value": demand["drop_pct"],
@@ -906,7 +1070,17 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             "severity_multiplier": _claim_severity_multiplier("demand_collapse", demand_drop_pct=demand["drop_pct"]),
         },
         {
+            "name": "order_pause",
+            "category": "platform",
+            "source": "mock",
+            "fired": order_pause_active,
+            "value": 1.0 if order_pause_active else 0.0,
+            "threshold": 1.0,
+            "severity_multiplier": 1.25,
+        },
+        {
             "name": "zone_shutdown",
+            "category": "platform",
             "source": "mock",
             "fired": zone_shutdown,
             "value": 1.0 if zone_shutdown else 0.0,
@@ -915,11 +1089,21 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
         },
         {
             "name": "platform_outage",
+            "category": "platform",
             "source": "mock",
             "fired": platform_degraded,
             "value": 1.0 if platform_degraded else 0.0,
             "threshold": 1.0,
             "severity_multiplier": _claim_severity_multiplier("platform_outage"),
+        },
+        {
+            "name": external_event_name or "external_event",
+            "category": "external",
+            "source": "mock",
+            "fired": external_event_active,
+            "value": 1.0 if external_event_active else 0.0,
+            "threshold": 1.0,
+            "severity_multiplier": 1.35,
         },
     ]
 
@@ -976,6 +1160,7 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
         claim_trigger_responses.append(
             ClaimTriggerResponse(
                 name=str(spec["name"]),
+                category=str(spec["category"]),
                 source=spec["source"],
                 fired=fired,
                 status="fired" if fired else "not-fired",
@@ -1037,6 +1222,7 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
         payout_amount=payout_amount,
         trigger_list=claim_trigger_responses,
         demo_scenario_applied=applied_scenario,
+        demo_scenarios_applied=applied_scenarios,
         explanation=explanation,
         ai_verdict=_gemini_claim_verdict(
             claim_status=claim_status,

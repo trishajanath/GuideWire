@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, IndianRupee, CloudRain, ArrowLeft, Loader2, CheckCircle2, Zap, Shield } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import BottomNav from "@/components/BottomNav";
 import FraudBreakdown from "@/components/FraudBreakdown";
 import FraudDemo from "@/components/FraudDemo";
+import TriggerLab from "@/components/TriggerLab";
 import { getCurrentUser } from "@/lib/session";
 import {
   getTriggerCheck,
@@ -325,7 +327,18 @@ const TriggerAlert = () => {
       {/* ─── Claim Tester (outside the phone, right side on desktop) ─── */}
       {userId && (
         <div className="hidden md:block w-[420px] max-h-[844px] overflow-y-auto flex-shrink-0 rounded-2xl border border-neutral-800 bg-neutral-900/80 p-5">
-          <FraudDemo workerId={userId} zoneId={zoneId} city={city} />
+          <Tabs defaultValue="trigger-lab" className="w-full">
+            <TabsList className="grid w-full grid-cols-2 bg-neutral-800/70">
+              <TabsTrigger value="trigger-lab">Trigger Lab</TabsTrigger>
+              <TabsTrigger value="spoof-sim">Fraud Spoof</TabsTrigger>
+            </TabsList>
+            <TabsContent value="trigger-lab" className="mt-4">
+              <TriggerLab workerId={userId} zoneId={zoneId} city={city} />
+            </TabsContent>
+            <TabsContent value="spoof-sim" className="mt-4">
+              <FraudDemo workerId={userId} zoneId={zoneId} city={city} />
+            </TabsContent>
+          </Tabs>
         </div>
       )}
     </div>
