@@ -396,6 +396,68 @@ export const autoClaim = (userId: number, hoursLost: number) =>
     body: JSON.stringify({ user_id: userId, hours_lost: hoursLost }),
   });
 
+export interface ClaimEvaluateTrigger {
+  name: string;
+  source: "openweather" | "mock";
+  fired: boolean;
+  status: "fired" | "not-fired";
+  value?: number;
+  threshold?: number;
+  severity_multiplier: number;
+  eligibility: {
+    policy_active: boolean;
+    premium_paid: boolean;
+    gps_in_zone: boolean;
+  };
+  fraud?: {
+    score: number;
+    decision: "auto-approve" | "approve-with-flag" | "hold-for-review";
+    breakdown: Array<{
+      label: string;
+      weight: number;
+      value: number;
+      contribution: number;
+    }>;
+  };
+  payout?: {
+    hours_lost: number;
+    hourly_rate: number;
+    severity_multiplier: number;
+    daily_cap: number;
+    raw_amount: number;
+    final_amount: number;
+    formula: string;
+  };
+}
+
+export interface ClaimEvaluateResult {
+  worker_id: number;
+  zone_id: string;
+  city: string;
+  claim_status: "no-trigger" | "auto-approve" | "approve-with-flag" | "hold-for-review";
+  fraud_score: number;
+  payout_amount: number;
+  trigger_list: ClaimEvaluateTrigger[];
+  demo_scenario_applied?: string | null;
+  explanation: string;
+}
+
+export const evaluateClaimEngine = (data: {
+  worker_id: number;
+  zone_id: string;
+  city: string;
+  gps_lat: number;
+  gps_lon: number;
+  hours_lost: number;
+  app_active?: boolean;
+  demo_mode?: boolean;
+  demo_scenario?: "none" | "heavy_rain" | "extreme_heat" | "demand_collapse" | "zone_shutdown" | "platform_outage";
+}) =>
+  request<ClaimEvaluateResult>("/api/claims/evaluate", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
 /* ---- Validate claim ---- */
 
 export interface ClaimValidation {

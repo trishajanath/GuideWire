@@ -10,15 +10,40 @@ import {
   getTriggerCheck,
   getWeatherRisk,
   getIMDAlert,
-  autoClaim,
+  evaluateClaimEngine,
   assessFraud,
   ZONES,
   type TriggerCheck as TriggerCheckT,
   type WeatherRisk,
-  type AutoClaimResult,
+  type ClaimEvaluateResult,
   type FraudAssessment,
   type IMDAlert,
 } from "@/lib/api";
+
+const CLAIM_ZONE_CENTERS: Record<string, { lat: number; lon: number }> = {
+  koramangala_blr: { lat: 12.9352, lon: 77.6245 },
+  indiranagar_blr: { lat: 12.9784, lon: 77.6408 },
+  whitefield_blr: { lat: 12.9698, lon: 77.75 },
+  hsr_layout_blr: { lat: 12.9116, lon: 77.6472 },
+  electronic_city_blr: { lat: 12.8456, lon: 77.6603 },
+};
+
+const CITY_CENTER: Record<string, { lat: number; lon: number }> = {
+  bengaluru: { lat: 12.9716, lon: 77.5946 },
+  bangalore: { lat: 12.9716, lon: 77.5946 },
+  mumbai: { lat: 19.076, lon: 72.8777 },
+  chennai: { lat: 13.0827, lon: 80.2707 },
+  kochi: { lat: 9.9312, lon: 76.2673 },
+  kolkata: { lat: 22.5726, lon: 88.3639 },
+  hyderabad: { lat: 17.385, lon: 78.4867 },
+  delhi: { lat: 28.6139, lon: 77.209 },
+};
+
+const getClaimGps = (zoneId: string, city: string) => {
+  const zone = CLAIM_ZONE_CENTERS[zoneId];
+  if (zone) return zone;
+  return CITY_CENTER[city.trim().toLowerCase()] ?? CITY_CENTER.bengaluru;
+};
 
 const TriggerAlert = () => {
   const navigate = useNavigate();
@@ -29,7 +54,7 @@ const TriggerAlert = () => {
 
   const [trigger, setTrigger] = useState<TriggerCheckT | null>(null);
   const [risk, setRisk] = useState<WeatherRisk | null>(null);
-  const [claimResult, setClaimResult] = useState<AutoClaimResult | null>(null);
+  const [claimResult, setClaimResult] = useState<ClaimEvaluateResult | null>(null);
   const [fraudData, setFraudData] = useState<FraudAssessment | null>(null);
   const [imdAlert, setImdAlert] = useState<IMDAlert | null>(null);
   const [loading, setLoading] = useState(true);
@@ -72,11 +97,18 @@ const TriggerAlert = () => {
           setAutoClaimed(true);
           setClaiming(true);
           try {
-            const claim = await autoClaim(userId, 2 + t.severity * 2);
+            const gps = getClaimGps(zoneId, city);
+            const claim = await evaluateClaimEngine({
+              worker_id: userId,
+              zone_id: zoneId,
+              city,
+              gps_lat: gps.lat,
+              gps_lon: gps.lon,
+              hours_lost: 2 + t.severity * 2,
+              app_active: true,
+            });
             if (!cancelled) {
               setClaimResult(claim);
-              // Use fraud details from claim result if available
-              if (claim.fraud_details) setFraudData(claim.fraud_details);
             }
           } catch {
             // Claim failed silently — user can retry
@@ -99,9 +131,17 @@ const TriggerAlert = () => {
     if (!userId) return;
     setClaiming(true);
     try {
-      const claim = await autoClaim(userId, 2);
+      const gps = getClaimGps(zoneId, city);
+      const claim = await evaluateClaimEngine({
+        worker_id: userId,
+        zone_id: zoneId,
+        city,
+        gps_lat: gps.lat,
+        gps_lon: gps.lon,
+        hours_lost: 2,
+        app_active: true,
+      });
       setClaimResult(claim);
-      if (claim.fraud_details) setFraudData(claim.fraud_details);
     } catch {
       /* ignore */
     } finally {
@@ -114,6 +154,7 @@ const TriggerAlert = () => {
   const triggerType = imdRed
     ? `imd ${imdAlert?.event ?? "alert"}`
     : trigger?.type?.replace(/_/g, " ") ?? "Unknown";
+  const firstFired = claimResult?.trigger_list?.find((item) => item.fired);
 
   return (
     <MobileShell>
@@ -204,17 +245,20 @@ const TriggerAlert = () => {
               </div>
             ) : claimResult ? (
               <div className={`rounded-2xl p-4 mb-6 text-center ${
-                claimResult.status === "approved"
+                claimResult.claim_status === "auto-approve" || claimResult.claim_status === "approve-with-flag"
                   ? "bg-accent-green/10 border border-accent-green/30"
                   : "bg-warning/10 border border-warning/30"
               }`}>
-                {claimResult.status === "approved" ? (
+                {claimResult.claim_status === "auto-approve" || claimResult.claim_status === "approve-with-flag" ? (
                   <>
                     <CheckCircle2 size={28} className="text-accent-green mx-auto mb-2" />
                     <p className="text-lg font-extrabold text-accent-green mb-1">
                       ₹{claimResult.payout_amount} Credited
                     </p>
-                    <p className="text-xs text-muted-foreground">{claimResult.message}</p>
+                    <p className="text-xs text-muted-foreground">{claimResult.explanation}</p>
+                    {firstFired?.payout?.formula && (
+                      <p className="text-[11px] text-muted-foreground mt-1">{firstFired.payout.formula}</p>
+                    )}
                     <div className="flex items-center justify-center gap-2 mt-2">
                       <Zap size={12} className="text-accent-green" strokeWidth={1.5} />
                       <span className="text-[10px] font-bold text-accent-green">Zero-touch · Auto-processed</span>
@@ -224,9 +268,9 @@ const TriggerAlert = () => {
                   <>
                     <Shield size={28} className="text-warning mx-auto mb-2" />
                     <p className="text-sm font-bold text-foreground mb-1">
-                      Claim {claimResult.status === "under review" ? "Under Review" : "Processed"}
+                      Claim {claimResult.claim_status === "hold-for-review" ? "Under Review" : "Processed"}
                     </p>
-                    <p className="text-xs text-muted-foreground">{claimResult.message}</p>
+                    <p className="text-xs text-muted-foreground">{claimResult.explanation}</p>
                     {claimResult.fraud_score > 0 && (
                       <p className="text-[10px] text-muted-foreground mt-1">
                         Fraud score: {(claimResult.fraud_score * 100).toFixed(0)}%

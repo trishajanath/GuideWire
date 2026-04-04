@@ -3,6 +3,7 @@ import logging
 import secrets
 import re
 import hashlib
+import math
 from pathlib import Path
 from typing import Literal
 from datetime import datetime, timezone, timedelta
@@ -534,6 +535,522 @@ class PremiumModelInfoResponse(BaseModel):
     coefficients: dict[str, float]
     features: list[str]
     trained_at: str | None = None
+
+
+class ClaimEvaluateRequest(BaseModel):
+    worker_id: int = Field(..., ge=1)
+    zone_id: str = Field(..., min_length=1)
+    city: str = Field(..., min_length=1)
+    gps_lat: float
+    gps_lon: float
+    hours_lost: float = Field(..., gt=0)
+    app_active: bool = True
+    event_timestamp: datetime | None = None
+    demo_mode: bool = False
+    demo_scenario: Literal[
+        "none",
+        "heavy_rain",
+        "extreme_heat",
+        "demand_collapse",
+        "zone_shutdown",
+        "platform_outage",
+    ] = "none"
+
+
+class TriggerEligibilityResponse(BaseModel):
+    policy_active: bool
+    premium_paid: bool
+    gps_in_zone: bool
+
+
+class TriggerFraudBreakdownItem(BaseModel):
+    label: str
+    weight: float
+    value: float
+    contribution: float
+
+
+class TriggerFraudResponse(BaseModel):
+    score: float
+    breakdown: list[TriggerFraudBreakdownItem]
+    decision: Literal["auto-approve", "approve-with-flag", "hold-for-review"]
+
+
+class TriggerPayoutResponse(BaseModel):
+    hours_lost: float
+    hourly_rate: float
+    severity_multiplier: float
+    daily_cap: float
+    raw_amount: float
+    final_amount: float
+    formula: str
+
+
+class ClaimTriggerResponse(BaseModel):
+    name: str
+    source: Literal["openweather", "mock"]
+    fired: bool
+    status: Literal["fired", "not-fired"]
+    value: float | None = None
+    threshold: float | None = None
+    severity_multiplier: float
+    eligibility: TriggerEligibilityResponse
+    fraud: TriggerFraudResponse | None = None
+    payout: TriggerPayoutResponse | None = None
+
+
+class ClaimEvaluateResponse(BaseModel):
+    worker_id: int
+    zone_id: str
+    city: str
+    claim_status: Literal["no-trigger", "auto-approve", "approve-with-flag", "hold-for-review"]
+    fraud_score: float
+    payout_amount: float
+    trigger_list: list[ClaimTriggerResponse]
+    demo_scenario_applied: str | None = None
+    explanation: str
+
+
+CLAIM_GPS_MAX_DISTANCE_KM = 15.0
+
+CLAIM_ZONE_CENTERS: dict[str, tuple[float, float]] = {
+    "koramangala_blr": (12.9352, 77.6245),
+    "indiranagar_blr": (12.9784, 77.6408),
+    "whitefield_blr": (12.9698, 77.7500),
+    "hsr_layout_blr": (12.9116, 77.6472),
+    "electronic_city_blr": (12.8456, 77.6603),
+    "bengaluru": (12.9716, 77.5946),
+    "bangalore": (12.9716, 77.5946),
+    "mumbai": (19.0760, 72.8777),
+    "chennai": (13.0827, 80.2707),
+    "kochi": (9.9312, 76.2673),
+    "kolkata": (22.5726, 88.3639),
+    "hyderabad": (17.3850, 78.4867),
+    "delhi": (28.6139, 77.2090),
+}
+
+CLAIM_ZONE_SHUTDOWN_ZONES = {"mumbai", "chennai", "kolkata", "kochi"}
+CLAIM_PLATFORM_DEGRADED_ZONES = {"mumbai", "kolkata", "delhi"}
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    radius_km = 6371.0
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(delta_lon / 2) ** 2
+    )
+    return 2 * radius_km * math.asin(math.sqrt(a))
+
+
+def _infer_claim_zone_center(zone_id: str, city: str) -> tuple[float, float] | None:
+    normalized_zone = zone_id.strip().lower()
+    normalized_city = city.strip().lower()
+    return CLAIM_ZONE_CENTERS.get(normalized_zone) or CLAIM_ZONE_CENTERS.get(normalized_city)
+
+
+async def _get_openweather_metrics(city: str) -> dict[str, float]:
+    payload = await fetch_openweather_payload(city)
+
+    if payload is None:
+        normalized = city.strip().lower()
+        fallback_rain = float(mock_rainfall_by_city.get(normalized, 0.0))
+        fallback_temp = 44.0 if normalized in {"mumbai", "chennai", "delhi"} else 34.0
+        return {"rainfall_mm_per_hr": fallback_rain, "temperature_c": fallback_temp}
+
+    rain = payload.get("rain", {}) if isinstance(payload, dict) else {}
+    rainfall_mm = float(rain.get("1h") or 0.0)
+    if rainfall_mm <= 0:
+                rainfall_mm = float(rain.get("3h") or 0.0) / 3.0
+    main = payload.get("main", {}) if isinstance(payload, dict) else {}
+    return {
+        "rainfall_mm_per_hr": rainfall_mm,
+        "temperature_c": float(main.get("temp", 0.0)),
+    }
+
+
+def _mock_demand_metrics(zone_id: str) -> dict[str, float]:
+    digest = hashlib.sha256(zone_id.lower().encode("utf-8")).digest()
+    historical_avg = 100.0 + (digest[0] % 25)
+    current_factor = 0.28 + (digest[1] / 255.0) * 0.7
+    current_index = historical_avg * current_factor
+    drop_pct = max(0.0, ((historical_avg - current_index) / historical_avg) * 100.0)
+    return {
+        "current_index": round(current_index, 2),
+        "historical_avg": round(historical_avg, 2),
+        "drop_pct": round(drop_pct, 2),
+    }
+
+
+def _mock_zone_shutdown_active(zone_id: str) -> bool:
+    normalized = zone_id.strip().lower()
+    return normalized in CLAIM_ZONE_SHUTDOWN_ZONES
+
+
+def _mock_platform_outage_degraded(zone_id: str) -> bool:
+    normalized = zone_id.strip().lower()
+    return normalized in CLAIM_PLATFORM_DEGRADED_ZONES
+
+
+def _apply_demo_scenario(
+    *,
+    scenario: str,
+    weather: dict[str, float],
+    demand: dict[str, float],
+    zone_shutdown: bool,
+    platform_degraded: bool,
+) -> tuple[dict[str, float], dict[str, float], bool, bool]:
+    next_weather = dict(weather)
+    next_demand = dict(demand)
+    next_zone_shutdown = zone_shutdown
+    next_platform_degraded = platform_degraded
+
+    if scenario == "heavy_rain":
+        next_weather["rainfall_mm_per_hr"] = 62.0
+    elif scenario == "extreme_heat":
+        next_weather["temperature_c"] = 46.0
+    elif scenario == "demand_collapse":
+        next_demand["drop_pct"] = 82.0
+        next_demand["current_index"] = round(next_demand["historical_avg"] * 0.18, 2)
+    elif scenario == "zone_shutdown":
+        next_zone_shutdown = True
+    elif scenario == "platform_outage":
+        next_platform_degraded = True
+
+    return next_weather, next_demand, next_zone_shutdown, next_platform_degraded
+
+
+def _zone_worker_ratio(zone_id: str) -> float:
+    data = ZONE_ACTIVITY_DATA.get(zone_id, {})
+    active = float(data.get("active_workers", 0.0))
+    idle = float(data.get("idle_workers", 0.0))
+    total = max(active + idle, 1.0)
+    return round(active / total, 3)
+
+
+def _recent_claim_counts(worker_id: int, zone_id: str) -> tuple[int, int]:
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+    worker_count = 0
+    zone_count = 0
+    for claim in claims:
+        timestamp = claim.get("timestamp")
+        if not isinstance(timestamp, datetime):
+            continue
+        if timestamp < week_ago:
+            continue
+        if claim.get("user_id") == worker_id:
+            worker_count += 1
+        if str(claim.get("zone_id", "")).strip().lower() == zone_id.strip().lower():
+            zone_count += 1
+    return worker_count, zone_count
+
+
+def _has_duplicate_event(worker_id: int, zone_id: str, trigger_name: str, event_date: str) -> bool:
+    for claim in claims:
+        if claim.get("user_id") != worker_id:
+            continue
+        if str(claim.get("zone_id", "")).strip().lower() != zone_id.strip().lower():
+            continue
+        timestamp = claim.get("timestamp")
+        if not isinstance(timestamp, datetime):
+            continue
+        if timestamp.astimezone(timezone.utc).date().isoformat() != event_date:
+            continue
+        claim_triggers = [part.strip() for part in str(claim.get("trigger_type") or "").split(",") if part.strip()]
+        if trigger_name in claim_triggers:
+            return True
+    return False
+
+
+def _claim_plan_details(user: dict, policy: dict | None) -> dict:
+    selected_plan = str(user.get("selected_plan") or (policy or {}).get("tier") or "Standard")
+    selected_plan = selected_plan.replace(" Shield", "").strip().capitalize()
+    return plans.get(selected_plan, plans["Standard"])
+
+
+def _claim_severity_multiplier(trigger_name: str, *, demand_drop_pct: float | None = None) -> float:
+    return _severity_for_trigger(trigger_name, demand_drop_pct=demand_drop_pct)
+
+
+@app.post("/api/claims/evaluate", response_model=ClaimEvaluateResponse)
+async def evaluate_claim(payload: ClaimEvaluateRequest):
+    user = users.get(payload.worker_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    policy = policies.get(payload.worker_id)
+    plan_details = _claim_plan_details(user, policy)
+    plan_tier = str(user.get("selected_plan") or (policy or {}).get("tier") or "Standard").replace(" Shield", "").strip().capitalize()
+    hourly_rate = float(plan_details["hourly_rate"])
+    daily_cap = float(plan_details["daily_cap"])
+
+    weather = await _get_openweather_metrics(payload.city)
+    demand = _mock_demand_metrics(payload.zone_id)
+    zone_shutdown = _mock_zone_shutdown_active(payload.zone_id)
+    platform_degraded = _mock_platform_outage_degraded(payload.zone_id)
+
+    applied_scenario: str | None = None
+    if payload.demo_mode and payload.demo_scenario != "none":
+        weather, demand, zone_shutdown, platform_degraded = _apply_demo_scenario(
+            scenario=payload.demo_scenario,
+            weather=weather,
+            demand=demand,
+            zone_shutdown=zone_shutdown,
+            platform_degraded=platform_degraded,
+        )
+        applied_scenario = payload.demo_scenario
+
+    zone_center = _infer_claim_zone_center(payload.zone_id, payload.city)
+    gps_in_zone = False
+    if zone_center is not None:
+        gps_distance = _haversine_km(payload.gps_lat, payload.gps_lon, zone_center[0], zone_center[1])
+        gps_in_zone = gps_distance <= CLAIM_GPS_MAX_DISTANCE_KM
+    else:
+        gps_distance = None
+
+    policy_active = bool(policy and policy.get("status") == "active")
+    premium_paid = bool(user.get("selected_plan") and user.get("plan_details"))
+    app_active = bool(payload.app_active)
+
+    zone_ratio = _zone_worker_ratio(payload.zone_id)
+    worker_count, zone_count = _recent_claim_counts(payload.worker_id, payload.zone_id)
+    zone_average_claims = zone_count / max(float(ZONE_ACTIVITY_DATA.get(payload.zone_id, {}).get("active_workers", 1)), 1.0)
+    claim_frequency_ratio = 0.0
+    if zone_average_claims > 0:
+        claim_frequency_ratio = max(0.0, (worker_count - zone_average_claims) / zone_average_claims)
+
+    event_timestamp = payload.event_timestamp or datetime.now(timezone.utc)
+    if event_timestamp.tzinfo is None:
+        event_timestamp = event_timestamp.replace(tzinfo=timezone.utc)
+    else:
+        event_timestamp = event_timestamp.astimezone(timezone.utc)
+    event_date = event_timestamp.astimezone(timezone.utc).date().isoformat()
+
+    trigger_specs = [
+        {
+            "name": "heavy_rain",
+            "source": "openweather",
+            "fired": weather["rainfall_mm_per_hr"] > 25.0,
+            "value": weather["rainfall_mm_per_hr"],
+            "threshold": 25.0,
+            "severity_multiplier": 1.2,
+        },
+        {
+            "name": "extreme_heat",
+            "source": "openweather",
+            "fired": weather["temperature_c"] > 42.0,
+            "value": weather["temperature_c"],
+            "threshold": 42.0,
+            "severity_multiplier": 1.1,
+        },
+        {
+            "name": "demand_collapse",
+            "source": "mock",
+            "fired": demand["drop_pct"] > 50.0,
+            "value": demand["drop_pct"],
+            "threshold": 50.0,
+            "severity_multiplier": _claim_severity_multiplier("demand_collapse", demand_drop_pct=demand["drop_pct"]),
+        },
+        {
+            "name": "zone_shutdown",
+            "source": "mock",
+            "fired": zone_shutdown,
+            "value": 1.0 if zone_shutdown else 0.0,
+            "threshold": 1.0,
+            "severity_multiplier": _claim_severity_multiplier("zone_shutdown"),
+        },
+        {
+            "name": "platform_outage",
+            "source": "mock",
+            "fired": platform_degraded,
+            "value": 1.0 if platform_degraded else 0.0,
+            "threshold": 1.0,
+            "severity_multiplier": _claim_severity_multiplier("platform_outage"),
+        },
+    ]
+
+    claim_trigger_responses: list[ClaimTriggerResponse] = []
+    highest_fraud = 0.0
+
+    for spec in trigger_specs:
+        fired = bool(spec["fired"])
+        eligibility = TriggerEligibilityResponse(
+            policy_active=policy_active,
+            premium_paid=premium_paid,
+            gps_in_zone=gps_in_zone,
+        )
+
+        duplicate_event = _has_duplicate_event(payload.worker_id, payload.zone_id, str(spec["name"]), event_date)
+        fraud_score = 0.0
+        fraud_response: TriggerFraudResponse | None = None
+        payout_response: TriggerPayoutResponse | None = None
+
+        if fired:
+            fraud_score, breakdown = _trigger_fraud_breakdown(
+                gps_in_zone=gps_in_zone,
+                app_active=app_active,
+                zone_worker_ratio=zone_ratio,
+                duplicate_claim=duplicate_event,
+                claim_frequency_ratio=claim_frequency_ratio,
+            )
+            fraud_decision = _format_fraud_decision(fraud_score)
+            fraud_response = TriggerFraudResponse(
+                score=fraud_score,
+                breakdown=[TriggerFraudBreakdownItem(**item) for item in breakdown],
+                decision=fraud_decision,
+            )
+
+            if spec["name"] == "demand_collapse":
+                severity_multiplier = _claim_severity_multiplier("demand_collapse", demand_drop_pct=float(spec["value"]))
+            else:
+                severity_multiplier = float(spec["severity_multiplier"])
+
+            raw_amount = payload.hours_lost * hourly_rate * severity_multiplier
+            final_amount = min(raw_amount, daily_cap)
+            payout_response = TriggerPayoutResponse(
+                hours_lost=payload.hours_lost,
+                hourly_rate=hourly_rate,
+                severity_multiplier=severity_multiplier,
+                daily_cap=daily_cap,
+                raw_amount=round(raw_amount, 2),
+                final_amount=round(final_amount, 2),
+                formula=f"{payload.hours_lost}h × ₹{int(hourly_rate)} × {severity_multiplier} = ₹{round(final_amount, 2)}",
+            )
+
+            highest_fraud = max(highest_fraud, fraud_score)
+        claim_trigger_responses.append(
+            ClaimTriggerResponse(
+                name=str(spec["name"]),
+                source=spec["source"],
+                fired=fired,
+                status="fired" if fired else "not-fired",
+                value=float(spec["value"]) if spec["value"] is not None else None,
+                threshold=float(spec["threshold"]) if spec["threshold"] is not None else None,
+                severity_multiplier=float(spec["severity_multiplier"]),
+                eligibility=eligibility,
+                fraud=fraud_response,
+                payout=payout_response,
+            )
+        )
+
+    fired_triggers = [item for item in claim_trigger_responses if item.fired]
+    if not fired_triggers:
+        claim_status = "no-trigger"
+        payout_amount = 0.0
+        explanation = "No parametric trigger fired for this claim."
+    else:
+        if any(not item.eligibility.policy_active or not item.eligibility.premium_paid or not item.eligibility.gps_in_zone for item in fired_triggers):
+            claim_status = "hold-for-review"
+        elif highest_fraud < 0.3:
+            claim_status = "auto-approve"
+        elif highest_fraud <= 0.7:
+            claim_status = "approve-with-flag"
+        else:
+            claim_status = "hold-for-review"
+
+        summed_payout = round(sum(item.payout.final_amount for item in fired_triggers if item.payout), 2)
+        payout_amount = 0.0 if claim_status == "hold-for-review" else round(min(summed_payout, daily_cap), 2)
+        explanation = (
+            f"{len(fired_triggers)} trigger(s) fired. Fraud score maxed at {round(highest_fraud, 3)} and claim was {claim_status}."
+        )
+
+    claims.append(
+        {
+            "user_id": payload.worker_id,
+            "timestamp": event_timestamp,
+            "status": claim_status,
+            "fraud_score": round(highest_fraud, 3),
+            "fraud_details": {
+                "overall_score": round(highest_fraud, 3),
+                "decision": claim_status,
+            },
+            "trigger_type": ",".join(item.name for item in fired_triggers) if fired_triggers else None,
+            "payout_amount": payout_amount,
+            "zone_id": payload.zone_id,
+            "hours_lost": payload.hours_lost,
+            "hourly_rate": hourly_rate,
+            "multiplier": 1.0,
+        }
+    )
+
+    return ClaimEvaluateResponse(
+        worker_id=payload.worker_id,
+        zone_id=payload.zone_id,
+        city=payload.city,
+        claim_status=claim_status,
+        fraud_score=round(highest_fraud, 3),
+        payout_amount=payout_amount,
+        trigger_list=claim_trigger_responses,
+        demo_scenario_applied=applied_scenario,
+        explanation=explanation,
+    )
+
+
+def _trigger_fraud_breakdown(
+    *,
+    gps_in_zone: bool,
+    app_active: bool,
+    zone_worker_ratio: float,
+    duplicate_claim: bool,
+    claim_frequency_ratio: float,
+) -> tuple[float, list[dict[str, float]]]:
+    rule_values = {
+        "gps_in_registered_zone": 0.0 if gps_in_zone else 1.0,
+        "app_active_during_event": 0.0 if app_active else 1.0,
+        "zone_worker_ratio": 0.0 if zone_worker_ratio > 0.4 else 1.0,
+        "no_duplicate_claim": 1.0 if duplicate_claim else 0.0,
+        "claim_frequency_vs_zone_average": max(0.0, min(1.0, claim_frequency_ratio)),
+    }
+    weighted_rules = [
+        ("GPS in registered zone", 0.25, rule_values["gps_in_registered_zone"]),
+        ("App active during event", 0.20, rule_values["app_active_during_event"]),
+        ("Zone worker ratio", 0.25, rule_values["zone_worker_ratio"]),
+        ("No duplicate claim", 0.15, rule_values["no_duplicate_claim"]),
+        ("Claim frequency vs zone average", 0.15, rule_values["claim_frequency_vs_zone_average"]),
+    ]
+
+    score = 0.0
+    breakdown: list[dict[str, float]] = []
+    for label, weight, value in weighted_rules:
+        contribution = round(weight * value, 3)
+        score += contribution
+        breakdown.append(
+            {
+                "label": label,
+                "weight": weight,
+                "value": round(value, 3),
+                "contribution": contribution,
+            }
+        )
+
+    return round(min(1.0, score), 3), breakdown
+
+
+def _severity_for_trigger(trigger_name: str, *, demand_drop_pct: float | None = None) -> float:
+    if trigger_name == "demand_collapse" and demand_drop_pct is not None:
+        if demand_drop_pct > 60:
+            return 1.5
+        if demand_drop_pct >= 40:
+            return 1.2
+        if demand_drop_pct >= 20:
+            return 1.0
+    if trigger_name == "zone_shutdown":
+        return 1.3
+    if trigger_name == "platform_outage":
+        return 1.2
+    if trigger_name == "extreme_heat":
+        return 1.1
+    return 1.0
+
+
+def _format_fraud_decision(score: float) -> str:
+    if score < 0.3:
+        return "auto-approve"
+    if score <= 0.7:
+        return "approve-with-flag"
+    return "hold-for-review"
 
 
 class PolicyUpgradeRequest(BaseModel):
@@ -1598,6 +2115,11 @@ def get_premium_zones_endpoint():
 @app.get("/api/premium/model-info", response_model=PremiumModelInfoResponse)
 def get_premium_model_info_endpoint():
     return get_premium_model_info()
+
+
+@app.post("/api/claims/evaluate", response_model=ClaimEvaluateResponse)
+async def evaluate_claim_endpoint(payload: ClaimEvaluateRequest):
+    return await evaluate_claim(payload)
 
 
 @app.get("/api/claims/{user_id}")

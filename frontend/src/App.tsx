@@ -11,6 +11,7 @@ import KYC from "./pages/KYC";
 import Plans from "./pages/Plans";
 import Dashboard from "./pages/Dashboard";
 import TriggerAlert from "./pages/TriggerAlert";
+import TriggerDemo from "./pages/TriggerDemo";
 import Payouts from "./pages/Payouts";
 import PayoutDetail from "./pages/PayoutDetail";
 import Weather from "./pages/Weather";
@@ -38,6 +39,7 @@ const App = () => (
           <Route path="/plans" element={<Plans />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/trigger" element={<TriggerAlert />} />
+          <Route path="/trigger-demo" element={<TriggerDemo />} />
           <Route path="/payouts" element={<Payouts />} />
           <Route path="/payout-detail" element={<PayoutDetail />} />
           <Route path="/weather" element={<Weather />} />
