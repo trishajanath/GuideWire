@@ -43,7 +43,7 @@ const AdminDashboard = () => {
               key={item.label}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors ${
                 item.active
-                  ? "bg-accent-orange/15 text-accent-orange"
+                  ? "bg-foreground/10 text-foreground"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground"
               }`}
             >
@@ -78,10 +78,10 @@ const AdminDashboard = () => {
           {/* Stats Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             {[
-              { label: "Active Workers", value: "12,847", icon: Users, color: "gradient-orange" },
+              { label: "Active Workers", value: "12,847", icon: Users, color: "bg-foreground/15" },
               { label: "Active Triggers", value: "3", icon: AlertTriangle, color: "bg-warning" },
               { label: "Today's Payouts", value: "₹4.89L", icon: IndianRupee, color: "gradient-green" },
-              { label: "Premium Revenue", value: "₹6.29L", icon: TrendingUp, color: "gradient-orange" },
+              { label: "Premium Revenue", value: "₹6.29L", icon: TrendingUp, color: "bg-foreground/15" },
             ].map((stat) => (
               <div key={stat.label} className="bg-card rounded-2xl p-5 shadow-card">
                 <div className="flex items-center justify-between mb-3">

@@ -24,11 +24,11 @@ const KYC = () => {
       <div className="flex flex-col h-full md:min-h-0 min-h-screen px-4 pt-10 pb-6">
         {/* Progress */}
         <div className="flex items-center gap-2 mb-1.5">
-          <span className="text-xs font-semibold text-accent-orange">Step 2 of 4</span>
+          <span className="text-xs font-medium text-muted-foreground">Step 2 of 4</span>
         </div>
         <div className="flex gap-2 mb-5">
-          <div className="h-1.5 flex-1 rounded-full bg-accent-orange" />
-          <div className="h-1.5 flex-1 rounded-full bg-accent-orange" />
+          <div className="h-1 flex-1 rounded-full bg-muted-foreground/40" />
+          <div className="h-1 flex-1 rounded-full bg-muted-foreground/40" />
           <div className="h-1.5 flex-1 rounded-full bg-muted" />
           <div className="h-1.5 flex-1 rounded-full bg-muted" />
         </div>
@@ -43,7 +43,7 @@ const KYC = () => {
         {/* Aadhaar Card */}
         <div className="card-premium rounded-xl p-4 mb-3">
           <div className="flex items-center gap-3 mb-3">
-            <ShieldCheck size={20} className="text-accent-orange" strokeWidth={1.5} />
+            <ShieldCheck size={20} className="text-muted-foreground" strokeWidth={1.5} />
             <div>
               <h3 className="text-sm font-bold text-foreground">Aadhaar Verification</h3>
               <p className="text-xs text-muted-foreground">Secure verification via DigiLocker</p>

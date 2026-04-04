@@ -3,7 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { Shield, Activity, IndianRupee, Bell, CloudRain, ChevronRight } from "lucide-react";
 import MobileShell from "@/components/MobileShell";
 import BottomNav from "@/components/BottomNav";
+import { StaleIndicator } from "@/components/OfflineBanner";
 import { getCurrentUser } from "@/lib/session";
+import { useOfflineCache, useRainMode } from "@/hooks/use-offline";
 import {
   getDashboard,
   getCityWeather,
@@ -25,28 +27,49 @@ const Dashboard = () => {
   const [totalPayouts, setTotalPayouts] = useState(0);
   const [claimsCount, setClaimsCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [isStale, setIsStale] = useState(false);
 
   const backendUserId = user?.backendUserId;
+
+  // Offline-first: weather cache
+  const weatherCache = useOfflineCache<CityWeather>(
+    `weather_${city}`,
+    () => getCityWeather(city),
+  );
+
+  // Rain mode: activate when weather risk is elevated
+  const rainActive = useRainMode(weatherCache.data?.weather_risk_score ?? null);
+
+  useEffect(() => {
+    if (weatherCache.data) setWeather(weatherCache.data);
+    if (weatherCache.isStale) setIsStale(true);
+  }, [weatherCache.data, weatherCache.isStale]);
+
+  // Toggle rain mode class on body
+  useEffect(() => {
+    if (rainActive) {
+      document.documentElement.classList.add("rain-mode");
+    } else {
+      document.documentElement.classList.remove("rain-mode");
+    }
+    return () => document.documentElement.classList.remove("rain-mode");
+  }, [rainActive]);
 
   useEffect(() => {
     if (!user) {
       navigate("/login");
       return;
     }
-    const fetches: Promise<unknown>[] = [
-      getCityWeather(city).then(setWeather),
-    ];
     if (backendUserId != null) {
-      fetches.push(
-        getDashboard(backendUserId).then((d) => {
-          setTotalPayouts(d.total_payouts ?? 0);
-          setClaimsCount(d.recent_claims?.length ?? 0);
-        }),
-      );
+      getDashboard(backendUserId).then((d) => {
+        setTotalPayouts(d.total_payouts ?? 0);
+        setClaimsCount(d.recent_claims?.length ?? 0);
+      }).catch(() => {}).finally(() => setLoading(false));
+    } else {
+      setLoading(false);
     }
-    Promise.allSettled(fetches).finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate, city, backendUserId]);
+  }, [navigate, backendUserId]);
 
   const premiumMap: Record<string, number> = {
     "Basic Shield": 49,
@@ -72,7 +95,14 @@ const Dashboard = () => {
 
   return (
     <MobileShell>
-      <div className="px-4 pt-10 pb-24">
+      <div className={`px-4 pt-10 pb-24 ${rainActive ? "rain-overlay" : ""}`}>
+        {/* Stale data indicator */}
+        {isStale && (
+          <div className="mb-3">
+            <StaleIndicator isStale />
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -96,7 +126,7 @@ const Dashboard = () => {
         <div className="card-premium rounded-2xl p-6 mb-6 shadow-elevated">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Shield size={16} className="text-accent-orange" strokeWidth={1.5} />
+              <Shield size={16} className="text-muted-foreground" strokeWidth={1.5} />
               <span className="text-xs font-medium text-muted-foreground tracking-wide">
                 Your Coverage
               </span>
@@ -149,7 +179,7 @@ const Dashboard = () => {
         <div className="space-y-2">
           <button
             onClick={() => navigate("/weather")}
-            className="w-full rounded-xl px-4 py-3.5 flex items-center gap-3 text-left hover:bg-secondary/60 transition-colors"
+            className="w-full rounded-xl px-4 py-4 flex items-center gap-3 text-left hover:bg-secondary/60 transition-colors touch-target active:bg-secondary"
           >
             <CloudRain size={18} className="text-muted-foreground flex-shrink-0" strokeWidth={1.5} />
             <div className="flex-1 min-w-0">
@@ -165,7 +195,7 @@ const Dashboard = () => {
 
           <button
             onClick={() => navigate("/trigger")}
-            className="w-full rounded-xl px-4 py-3.5 flex items-center gap-3 text-left hover:bg-secondary/60 transition-colors"
+            className="w-full rounded-xl px-4 py-4 flex items-center gap-3 text-left hover:bg-secondary/60 transition-colors touch-target active:bg-secondary"
           >
             <Bell size={18} className={triggerActive ? "text-destructive flex-shrink-0" : "text-muted-foreground flex-shrink-0"} strokeWidth={1.5} />
             <div className="flex-1 min-w-0">
@@ -184,7 +214,7 @@ const Dashboard = () => {
 
           <button
             onClick={() => navigate("/plans")}
-            className="w-full rounded-xl px-4 py-3.5 flex items-center gap-3 text-left hover:bg-secondary/60 transition-colors"
+            className="w-full rounded-xl px-4 py-4 flex items-center gap-3 text-left hover:bg-secondary/60 transition-colors touch-target active:bg-secondary"
           >
             <Shield size={18} className="text-muted-foreground flex-shrink-0" strokeWidth={1.5} />
             <div className="flex-1 min-w-0">
@@ -196,7 +226,7 @@ const Dashboard = () => {
 
           <button
             onClick={() => navigate("/payouts")}
-            className="w-full rounded-xl px-4 py-3.5 flex items-center gap-3 text-left hover:bg-secondary/60 transition-colors"
+            className="w-full rounded-xl px-4 py-4 flex items-center gap-3 text-left hover:bg-secondary/60 transition-colors touch-target active:bg-secondary"
           >
             <IndianRupee size={18} className="text-muted-foreground flex-shrink-0" strokeWidth={1.5} />
             <div className="flex-1 min-w-0">

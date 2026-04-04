@@ -243,6 +243,7 @@ export interface AutoClaimResult {
   trigger_type: string | null;
   payout_amount: number;
   fraud_score: number;
+  fraud_details?: FraudAssessment;
   message: string;
   timestamp: string;
 }
@@ -305,6 +306,7 @@ export interface ClaimRecord {
   id: number;
   status: string;
   fraud_score: number;
+  fraud_details?: FraudAssessment;
   trigger_type: string | null;
   payout_amount: number;
   zone_id: string | null;
@@ -316,3 +318,27 @@ export interface ClaimRecord {
 
 export const getUserClaims = (userId: number) =>
   request<{ user_id: number; claims: ClaimRecord[] }>(`/api/claims/${userId}`);
+
+/* ---- Fraud Assessment ---- */
+
+export interface FraudSignal {
+  layer: string;
+  score: number;
+  confidence: number;
+  reason: string;
+  details: Record<string, unknown>;
+}
+
+export interface FraudAssessment {
+  overall_score: number;
+  risk_level: "LOW" | "MEDIUM" | "HIGH";
+  allow_payout: boolean;
+  signals: FraudSignal[];
+  explanation: string;
+}
+
+export const assessFraud = (userId: number, zoneId: string = "") =>
+  request<FraudAssessment>("/api/fraud/assess", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, zone_id: zoneId }),
+  });

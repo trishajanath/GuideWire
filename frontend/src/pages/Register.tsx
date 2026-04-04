@@ -314,7 +314,7 @@ const Register = () => {
                 disabled={submitting || phone.replace(/\D/g, "").length < 10}
                 className={`w-full h-14 text-base font-bold rounded-2xl border-0 transition-all ${
                   phone.replace(/\D/g, "").length >= 10
-                    ? "bg-accent-orange text-white hover:bg-accent-orange/90"
+                    ? "bg-foreground text-background hover:bg-foreground/90"
                     : "bg-secondary text-muted-foreground"
                 }`}
               >
@@ -372,7 +372,7 @@ const Register = () => {
                 disabled={submitting || otp.length < 6}
                 className={`w-full h-14 text-base font-bold rounded-2xl border-0 transition-all ${
                   otp.length >= 6
-                    ? "bg-accent-orange text-white hover:bg-accent-orange/90"
+                    ? "bg-foreground text-background hover:bg-foreground/90"
                     : "bg-secondary text-muted-foreground"
                 }`}
               >
@@ -476,7 +476,7 @@ const Register = () => {
                           }}
                         className={`px-4 py-3 rounded-xl text-sm font-semibold transition-all ${
                           zoneId === z.id
-                            ? "bg-accent-orange/15 text-accent-orange border border-accent-orange/30"
+                            ? "bg-foreground/10 text-foreground border border-foreground/20"
                             : "bg-secondary border border-border/40 text-foreground"
                         }`}
                       >
@@ -491,7 +491,7 @@ const Register = () => {
                   <label className="text-sm font-semibold text-foreground mb-3 block">
                     Delivery Platform
                   </label>
-                  <div className="px-5 py-3 rounded-xl text-sm font-semibold bg-accent-orange/15 text-accent-orange border border-accent-orange/30 text-center">
+                  <div className="px-5 py-3 rounded-xl text-sm font-semibold bg-foreground/10 text-foreground border border-foreground/20 text-center">
                     Swiggy
                   </div>
                 </div>

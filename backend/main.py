@@ -87,6 +87,11 @@ except ImportError:
     from assistant import generate_assistant_reply, generate_city_zone_suggestions
 
 try:
+    from .fraud_engine import assess_fraud, GPSPoint, ClaimRecord as FraudClaimRecord, ZONE_CENTERS
+except ImportError:
+    from fraud_engine import assess_fraud, GPSPoint, ClaimRecord as FraudClaimRecord, ZONE_CENTERS
+
+try:
     from .models import (
         TriggerDecisionResponse,
         WeatherRiskResponse,
@@ -540,18 +545,42 @@ def _normalize_city_display(city: str) -> str:
     return " ".join(word.capitalize() for word in normalized.split())
 
 
-def calculate_fraud_score(user_id: int) -> float:
+def calculate_fraud_score(user_id: int, zone_id: str = "", weather_risk: int = 0, anomaly_score: float = 0.0, trigger_active: bool = False) -> dict:
+    """Real 5-layer fraud assessment using fraud_engine.assess_fraud."""
     today = datetime.now(timezone.utc).date()
-    claims_today = [
-        claim for claim in claims
-        if claim["user_id"] == user_id and claim["timestamp"].date() == today
-    ]
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
 
-    if len(claims_today) <= 3:
-        return 0.2 if len(claims_today) else 0.0
+    # Build claim history from in-memory claims
+    history = []
+    for c in claims:
+        if c["user_id"] == user_id:
+            history.append(FraudClaimRecord(
+                timestamp=c["timestamp"],
+                zone_id=c.get("zone_id", ""),
+                payout_amount=c.get("payout_amount", 0),
+            ))
 
-    excess_claims = len(claims_today) - 3
-    return min(1.0, 0.5 + (excess_claims * 0.2))
+    # Simulate GPS from zone center (in production: real device GPS)
+    gps = None
+    zone_center = ZONE_CENTERS.get(zone_id)
+    if zone_center:
+        gps = GPSPoint(lat=zone_center.lat, lon=zone_center.lon, timestamp=datetime.now(timezone.utc))
+
+    assessment = assess_fraud(
+        worker_gps=gps,
+        claimed_zone_id=zone_id,
+        claim_history=history,
+        weather_risk_score=weather_risk,
+        zone_anomaly_score=anomaly_score,
+        zone_has_active_trigger=trigger_active,
+        previous_gps=gps,  # Same as current in demo (no spoofing)
+        login_timestamp=datetime.now(timezone.utc) - timedelta(hours=2),  # Simulated login 2h ago
+        claim_timestamp=datetime.now(timezone.utc),
+        active_hours_today=4.0,
+        is_logged_in=True,
+    )
+
+    return assessment.to_dict()
 
 
 def assess_basic_fraud_risk(fraud_signals: TriggerFraudSignalsInput) -> dict:
@@ -671,7 +700,7 @@ def trigger_weather(user_id: int):
 
 
 @app.post("/claim/auto")
-def auto_claim(payload: AutoClaimRequest):
+async def auto_claim(payload: AutoClaimRequest):
     user = users.get(payload.user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -680,11 +709,59 @@ def auto_claim(payload: AutoClaimRequest):
     if plan_details is None:
         raise HTTPException(status_code=400, detail="Plan not selected")
 
-    weather_trigger = check_weather_trigger(user["city"])
+    # ── Priority 2: Wire real weather data ────────────────────────────
+    # Try to get LIVE weather for user's city from OpenWeather
+    city = user.get("city", "Bengaluru")
+    zone_id = user.get("zone_area", "")
+    live_weather_payload = await fetch_openweather_payload(city)
+
+    if live_weather_payload is not None:
+        event = _build_weather_event(zone_id or city, live_weather_payload)
+        risk = calculate_weather_risk({
+            "rainfall": event.rainfall,
+            "temperature": event.temperature,
+            "humidity": event.humidity,
+            "wind_speed": event.wind_speed,
+        })
+        weather_risk_score = risk["weather_risk_score"]
+        trigger_type = risk["trigger_type"]
+        trigger_active = weather_risk_score > 60
+
+        # Also get zone anomaly
+        activity_data = ZONE_ACTIVITY_DATA.get(zone_id, {
+            "active_workers": 40, "idle_workers": 10, "avg_distance": 3.5,
+        })
+        activity = calculate_zone_activity_score(activity_data)
+        anomaly_score = activity["anomaly_score"]
+
+        # Determine trigger from real data
+        trigger_result = detect_trigger(weather_risk_score, anomaly_score, trigger_type)
+        weather_trigger = {
+            "trigger_status": trigger_result.get("trigger", False),
+            "trigger_type": trigger_type if trigger_result.get("trigger") else None,
+            "severity_level": trigger_result.get("severity", 0),
+            "rainfall_mm": event.rainfall,
+        }
+    else:
+        # Fallback to mock
+        weather_trigger = check_weather_trigger(city)
+        weather_risk_score = 50 if weather_trigger["trigger_status"] else 20
+        anomaly_score = -0.5 if weather_trigger["trigger_status"] else 0.3
+        trigger_active = weather_trigger["trigger_status"]
+
     user["last_trigger_status"] = weather_trigger["trigger_status"]
     user["last_trigger_type"] = weather_trigger["trigger_type"]
     user["last_trigger_severity"] = weather_trigger["severity_level"]
-    fraud_score = calculate_fraud_score(payload.user_id)
+
+    # ── Priority 1: Real 5-layer fraud assessment ─────────────────────
+    fraud_result = calculate_fraud_score(
+        user_id=payload.user_id,
+        zone_id=zone_id,
+        weather_risk=weather_risk_score,
+        anomaly_score=anomaly_score,
+        trigger_active=trigger_active,
+    )
+    fraud_score = fraud_result["overall_score"]
     now = datetime.now(timezone.utc)
 
     if not weather_trigger["trigger_status"]:
@@ -692,10 +769,11 @@ def auto_claim(payload: AutoClaimRequest):
             "user_id": payload.user_id,
             "timestamp": now,
             "fraud_score": fraud_score,
-            "status": "under review" if fraud_score >= 0.7 else "no_trigger",
+            "fraud_details": fraud_result,
+            "status": "under_review" if fraud_score >= 0.7 else "no_trigger",
             "trigger_type": None,
             "payout_amount": 0,
-            "zone_id": user.get("city", ""),
+            "zone_id": zone_id or city,
             "hours_lost": payload.hours_lost,
             "hourly_rate": plan_details["hourly_rate"],
             "multiplier": 1.0,
@@ -706,6 +784,7 @@ def auto_claim(payload: AutoClaimRequest):
             "trigger_type": None,
             "payout_amount": 0,
             "fraud_score": fraud_score,
+            "fraud_details": fraud_result,
             "message": "No active trigger found for payout",
             "timestamp": now.isoformat(),
         }
@@ -717,17 +796,20 @@ def auto_claim(payload: AutoClaimRequest):
     )
     payout_amount = round(payout, 2)
     credited_amount = int(payout_amount) if payout_amount.is_integer() else payout_amount
-    claim_status = "approved" if fraud_score < 0.7 else "under review"
+
+    # Use fraud engine result for approval decision
+    claim_status = "approved" if fraud_result["allow_payout"] else "under_review"
 
     claims.append(
         {
             "user_id": payload.user_id,
             "timestamp": now,
             "fraud_score": fraud_score,
+            "fraud_details": fraud_result,
             "status": claim_status,
             "trigger_type": weather_trigger["trigger_type"],
             "payout_amount": payout_amount if claim_status == "approved" else 0,
-            "zone_id": user.get("city", ""),
+            "zone_id": zone_id or city,
             "hours_lost": payload.hours_lost,
             "hourly_rate": plan_details["hourly_rate"],
             "multiplier": multiplier,
@@ -740,7 +822,8 @@ def auto_claim(payload: AutoClaimRequest):
             "trigger_type": weather_trigger["trigger_type"],
             "payout_amount": 0,
             "fraud_score": fraud_score,
-            "message": "Claim under review",
+            "fraud_details": fraud_result,
+            "message": f"Claim under review — {fraud_result['explanation']}",
             "timestamp": now.isoformat(),
         }
 
@@ -749,6 +832,7 @@ def auto_claim(payload: AutoClaimRequest):
         "trigger_type": weather_trigger["trigger_type"],
         "payout_amount": payout_amount,
         "fraud_score": fraud_score,
+        "fraud_details": fraud_result,
         "message": f"₹{credited_amount} credited to your account",
         "timestamp": now.isoformat(),
     }
@@ -782,6 +866,48 @@ def get_latest_raw_event(zone_id: str):
     if latest_event is None:
         raise HTTPException(status_code=404, detail="No weather data found for zone")
     return latest_event
+
+
+class FraudCheckRequest(BaseModel):
+    user_id: int = Field(..., ge=1)
+    zone_id: str = Field(default="")
+
+
+@app.post("/api/fraud/assess")
+def fraud_assess_endpoint(payload: FraudCheckRequest):
+    """Run real-time 5-layer fraud assessment for a user. Returns per-layer breakdown."""
+    user = users.get(payload.user_id)
+    zone_id = payload.zone_id or (user.get("zone_area", "") if user else "")
+
+    # Get latest weather risk for context
+    weather_risk = 0
+    anomaly = 0.0
+    trigger_active = False
+    latest_event = raw_event_repository.get_latest_by_zone(zone_id) if zone_id else None
+    if latest_event:
+        risk = calculate_weather_risk({
+            "rainfall": latest_event.rainfall,
+            "temperature": latest_event.temperature,
+            "humidity": latest_event.humidity,
+            "wind_speed": latest_event.wind_speed,
+        })
+        weather_risk = risk["weather_risk_score"]
+        activity_data = ZONE_ACTIVITY_DATA.get(zone_id, {
+            "active_workers": 40, "idle_workers": 10, "avg_distance": 3.5,
+        })
+        activity = calculate_zone_activity_score(activity_data)
+        anomaly = activity["anomaly_score"]
+        trigger_result = detect_trigger(weather_risk, anomaly, risk["trigger_type"])
+        trigger_active = trigger_result.get("trigger", False)
+
+    result = calculate_fraud_score(
+        user_id=payload.user_id,
+        zone_id=zone_id,
+        weather_risk=weather_risk,
+        anomaly_score=anomaly,
+        trigger_active=trigger_active,
+    )
+    return result
 
 
 @app.get("/api/risk/{zone_id}", response_model=WeatherRiskResponse)
@@ -954,6 +1080,7 @@ def get_user_claims(user_id: int):
             "id": idx + 1,
             "status": c["status"],
             "fraud_score": c["fraud_score"],
+            "fraud_details": c.get("fraud_details"),
             "trigger_type": c.get("trigger_type"),
             "payout_amount": c.get("payout_amount", 0),
             "zone_id": c.get("zone_id"),

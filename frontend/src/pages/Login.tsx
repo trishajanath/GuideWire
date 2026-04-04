@@ -62,7 +62,7 @@ const Login = () => {
           disabled={!isValid}
           className={`w-full h-14 text-base font-bold rounded-2xl border-0 transition-all ${
             isValid
-              ? "bg-accent-orange text-white hover:bg-accent-orange/90"
+              ? "bg-foreground text-background hover:bg-foreground/90"
               : "bg-secondary text-muted-foreground cursor-not-allowed"
           }`}
         >

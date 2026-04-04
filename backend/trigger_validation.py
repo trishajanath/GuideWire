@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import random
 from datetime import datetime, timezone
+
+try:
+    from .fraud_engine import assess_fraud, GPSPoint, ClaimRecord
+except ImportError:
+    from fraud_engine import assess_fraud, GPSPoint, ClaimRecord
 
 
 def is_data_fresh(
@@ -38,10 +42,6 @@ def check_worker_eligibility(worker_id: str, mock_eligibility_db: dict[str, bool
     return mock_eligibility_db.get(worker_id, False)
 
 
-def generate_fraud_score() -> float:
-    return round(random.uniform(0, 1), 2)
-
-
 def validate_claim(
     *,
     worker_id: str,
@@ -50,6 +50,15 @@ def validate_claim(
     weather_timestamp: datetime | None,
     gps_timestamp: datetime | None,
     mock_eligibility_db: dict[str, bool],
+    # New fraud engine inputs
+    worker_gps: GPSPoint | None = None,
+    claimed_zone_id: str = "",
+    claim_history: list[ClaimRecord] | None = None,
+    zone_has_active_trigger: bool = False,
+    previous_gps: GPSPoint | None = None,
+    login_timestamp: datetime | None = None,
+    active_hours_today: float = 0.0,
+    is_logged_in: bool = True,
 ) -> dict:
     fresh_data = is_data_fresh(weather_timestamp, gps_timestamp)
     breached = threshold_breach(weather_risk_score, anomaly_score)
@@ -62,21 +71,43 @@ def validate_claim(
     source_agreement = multi_source_agreement(simulated_sources)
     eligible_worker = check_worker_eligibility(worker_id, mock_eligibility_db)
 
-    fraud_score = generate_fraud_score()
+    # ── Real 5-layer fraud assessment ──────────────────────────────────
+    now = datetime.now(timezone.utc)
+    fraud_assessment = assess_fraud(
+        worker_gps=worker_gps,
+        claimed_zone_id=claimed_zone_id,
+        claim_history=claim_history or [],
+        weather_risk_score=weather_risk_score,
+        zone_anomaly_score=anomaly_score,
+        zone_has_active_trigger=zone_has_active_trigger,
+        previous_gps=previous_gps,
+        login_timestamp=login_timestamp,
+        claim_timestamp=now,
+        active_hours_today=active_hours_today,
+        is_logged_in=is_logged_in,
+    )
+    fraud_score = fraud_assessment.overall_score
+
+    base_result = {
+        "fraud_score": round(fraud_score, 3),
+        "fraud_risk": fraud_assessment.risk_level,
+        "fraud_signals": fraud_assessment.to_dict()["signals"],
+        "fraud_explanation": fraud_assessment.explanation,
+    }
 
     if not fresh_data:
-        return {"approved": False, "fraud_score": fraud_score, "payout": 0}
+        return {**base_result, "approved": False, "payout": 0}
 
     if not breached:
-        return {"approved": False, "fraud_score": fraud_score, "payout": 0}
+        return {**base_result, "approved": False, "payout": 0}
 
     if not source_agreement:
-        return {"approved": False, "fraud_score": fraud_score, "payout": 0}
+        return {**base_result, "approved": False, "payout": 0}
 
     if not eligible_worker:
-        return {"approved": False, "fraud_score": fraud_score, "payout": 0}
+        return {**base_result, "approved": False, "payout": 0}
 
-    if fraud_score > 0.85:
-        return {"approved": False, "fraud_score": fraud_score, "payout": 0}
+    if not fraud_assessment.allow_payout:
+        return {**base_result, "approved": False, "payout": 0}
 
-    return {"approved": True, "fraud_score": fraud_score, "payout": 720}
+    return {**base_result, "approved": True, "payout": 720}

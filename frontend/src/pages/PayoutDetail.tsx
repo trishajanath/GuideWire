@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { ArrowLeft, CheckCircle2, Download, CloudRain, MapPin, Clock, Thermometer, TrendingDown, AlertTriangle, ShieldAlert } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import MobileShell from "@/components/MobileShell";
 import BottomNav from "@/components/BottomNav";
+import FraudBreakdown from "@/components/FraudBreakdown";
 import { ZONES, type ClaimRecord } from "@/lib/api";
 
 const TRIGGER_META: Record<string, { label: string; icon: typeof CloudRain }> = {
@@ -17,6 +19,7 @@ const PayoutDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const claim = (location.state as { claim?: ClaimRecord })?.claim;
+  const [showFraudDetails, setShowFraudDetails] = useState(false);
 
   if (!claim) {
     return (
@@ -91,8 +94,16 @@ const PayoutDetail = () => {
             </div>
             <div className="flex justify-between py-2 border-b border-border">
               <span className="text-sm text-muted-foreground">Fraud Score</span>
-              <span className={`text-sm font-bold ${claim.fraud_score > 50 ? "text-destructive" : claim.fraud_score > 20 ? "text-warning" : "text-accent-green"}`}>
-                {claim.fraud_score}/100
+              <span className={`text-sm font-bold ${
+                (claim.fraud_score ?? 0) > 0.6 ? "text-destructive" :
+                (claim.fraud_score ?? 0) > 0.3 ? "text-warning" : "text-accent-green"
+              }`}>
+                {((claim.fraud_score ?? 0) * 100).toFixed(0)}%
+                {claim.fraud_details && (
+                  <span className="ml-1 text-xs font-normal text-muted-foreground">
+                    ({claim.fraud_details.risk_level})
+                  </span>
+                )}
               </span>
             </div>
             <div className="flex justify-between py-2">
@@ -103,7 +114,7 @@ const PayoutDetail = () => {
         </div>
 
         {/* Trigger Details */}
-        <div className="bg-card rounded-xl p-5 shadow-card border border-border/40 mb-6">
+        <div className="bg-card rounded-xl p-5 shadow-card border border-border/40 mb-4">
           <h3 className="text-sm font-bold text-foreground mb-4">Trigger Details</h3>
           <div className="space-y-3">
             <div className="flex items-center gap-3">
@@ -123,6 +134,19 @@ const PayoutDetail = () => {
             </div>
           </div>
         </div>
+
+        {/* 5-Layer Fraud Analysis */}
+        {claim.fraud_details && (
+          <div className="mb-6">
+            <FraudBreakdown assessment={claim.fraud_details} compact={!showFraudDetails} />
+            <button
+              onClick={() => setShowFraudDetails((v) => !v)}
+              className="w-full mt-2 py-3 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors rounded-xl bg-secondary/50 active:bg-secondary"
+            >
+              {showFraudDetails ? "Hide fraud details" : "Show 5-layer fraud analysis →"}
+            </button>
+          </div>
+        )}
 
         <Button
           className="w-full h-14 text-base font-bold rounded-2xl bg-foreground border-0 text-background hover:bg-foreground/90"

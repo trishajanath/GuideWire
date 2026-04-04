@@ -4,15 +4,18 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import MobileShell from "@/components/MobileShell";
 import BottomNav from "@/components/BottomNav";
+import FraudBreakdown from "@/components/FraudBreakdown";
 import { getCurrentUser } from "@/lib/session";
 import {
   getTriggerCheck,
   getWeatherRisk,
   autoClaim,
+  assessFraud,
   ZONES,
   type TriggerCheck as TriggerCheckT,
   type WeatherRisk,
   type AutoClaimResult,
+  type FraudAssessment,
 } from "@/lib/api";
 
 const TriggerAlert = () => {
@@ -24,9 +27,11 @@ const TriggerAlert = () => {
   const [trigger, setTrigger] = useState<TriggerCheckT | null>(null);
   const [risk, setRisk] = useState<WeatherRisk | null>(null);
   const [claimResult, setClaimResult] = useState<AutoClaimResult | null>(null);
+  const [fraudData, setFraudData] = useState<FraudAssessment | null>(null);
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
   const [autoClaimed, setAutoClaimed] = useState(false);
+  const [showFraudDetails, setShowFraudDetails] = useState(false);
 
   const selectedPlan = user?.selectedPlan;
   const userId = user?.backendUserId;
@@ -43,13 +48,25 @@ const TriggerAlert = () => {
         setTrigger(t);
         setRisk(r);
 
+        // Fetch real-time fraud assessment
+        if (userId) {
+          try {
+            const fraud = await assessFraud(userId, zoneId);
+            if (!cancelled) setFraudData(fraud);
+          } catch { /* non-blocking */ }
+        }
+
         // Zero-touch auto-claim: if trigger is active, automatically file claim
         if (t.trigger && userId) {
           setAutoClaimed(true);
           setClaiming(true);
           try {
             const claim = await autoClaim(userId, 2 + t.severity * 2);
-            if (!cancelled) setClaimResult(claim);
+            if (!cancelled) {
+              setClaimResult(claim);
+              // Use fraud details from claim result if available
+              if (claim.fraud_details) setFraudData(claim.fraud_details);
+            }
           } catch {
             // Claim failed silently — user can retry
           } finally {
@@ -73,6 +90,7 @@ const TriggerAlert = () => {
     try {
       const claim = await autoClaim(userId, 2);
       setClaimResult(claim);
+      if (claim.fraud_details) setFraudData(claim.fraud_details);
     } catch {
       /* ignore */
     } finally {
@@ -164,8 +182,8 @@ const TriggerAlert = () => {
 
             {/* Auto-payout result */}
             {claiming ? (
-              <div className="bg-accent-orange/10 rounded-2xl p-4 mb-6 text-center">
-                <Loader2 size={20} className="animate-spin text-accent-orange mx-auto mb-2" />
+              <div className="bg-foreground/5 rounded-2xl p-4 mb-6 text-center">
+                <Loader2 size={20} className="animate-spin text-muted-foreground mx-auto mb-2" />
                 <p className="text-sm font-semibold text-foreground">
                   Processing zero-touch claim...
                 </p>
@@ -218,6 +236,19 @@ const TriggerAlert = () => {
               >
                 Claim Now
               </Button>
+            )}
+
+            {/* Fraud Analysis Section */}
+            {fraudData && (
+              <div className="mb-4">
+                <FraudBreakdown assessment={fraudData} compact={!showFraudDetails} />
+                <button
+                  onClick={() => setShowFraudDetails((v) => !v)}
+                  className="w-full mt-2 py-3 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors rounded-xl bg-white/5 active:bg-white/10"
+                >
+                  {showFraudDetails ? "Hide fraud details" : "Show 5-layer fraud analysis →"}
+                </button>
+              </div>
             )}
 
             <Button

@@ -38,7 +38,7 @@ const Profile = () => {
           <div>
             <h2 className="text-base font-extrabold text-foreground">{user?.name ?? "Guest User"}</h2>
             <p className="text-sm text-muted-foreground">{formatIndianPhone(user?.phone ?? "")}</p>
-            <p className="text-xs text-accent-orange font-semibold mt-0.5">
+            <p className="text-xs text-muted-foreground font-semibold mt-0.5">
               {user?.platform ?? "Platform"} · {user?.city ?? "City"}
             </p>
           </div>

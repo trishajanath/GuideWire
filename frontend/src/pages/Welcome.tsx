@@ -56,7 +56,7 @@ const Welcome = () => {
             onClick={() => navigate("/login")}
             className="w-full text-center text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
           >
-            Already have an account? <span className="text-accent-orange">Login</span>
+            Already have an account? <span className="text-foreground font-semibold">Login</span>
           </button>
         </div>
       </div>
