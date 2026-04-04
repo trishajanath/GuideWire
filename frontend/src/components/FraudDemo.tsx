@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Shield,
   Loader2,
@@ -248,6 +248,13 @@ interface FraudDemoProps {
   city: string;
 }
 
+const normalizeCityKey = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace("bangalore", "bengaluru");
+
 export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
   // Editable claim fields
   const [selectedZone, setSelectedZone] = useState(zoneId);
@@ -255,6 +262,19 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
 
   const selectedZoneObj = ZONES.find((z) => z.id === selectedZone);
   const effectiveCity = selectedZoneObj?.city ?? city;
+  const cityKey = normalizeCityKey(city);
+
+  const cityZones = useMemo(() => {
+    return ZONES.filter((zone) => normalizeCityKey(zone.city) === cityKey);
+  }, [cityKey]);
+
+  useEffect(() => {
+    if (cityZones.length === 0) return;
+    if (!cityZones.some((zone) => zone.id === selectedZone)) {
+      setSelectedZone(cityZones[0].id);
+      setResult(null);
+    }
+  }, [cityZones, selectedZone]);
 
   // Scenario toggles
   const [activeScenarios, setActiveScenarios] = useState<Set<string>>(new Set());
@@ -297,14 +317,14 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
   const spoofGps = SPOOF_LOCATIONS[spoofTarget] ?? SPOOF_LOCATIONS.bengaluru;
   const gps = hasGpsSpoof ? spoofGps : realGps;
   const appActive = !hasAppInactive;
-  const demoScenario = hasNoDisruption ? ("none" as const) : ("heavy_rain" as const);
+  const demoScenario = !anyActive || hasNoDisruption ? ("none" as const) : ("heavy_rain" as const);
 
   const activeCount = activeScenarios.size;
 
   // Zone options (memoized)
   const zoneOptions = useMemo(
-    () => ZONES.map((z) => ({ value: z.id, label: `${z.area}, ${z.city}` })),
-    [],
+    () => cityZones.map((z) => ({ value: z.id, label: `${z.area}, ${z.city}` })),
+    [cityZones],
   );
   const spoofOptions = useMemo(
     () =>

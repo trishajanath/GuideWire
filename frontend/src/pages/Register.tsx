@@ -17,23 +17,36 @@ type CitySuggestion = {
 
 const GOOGLE_PLACES_API_KEY = import.meta.env.VITE_GOOGLE_PLACES_API_KEY?.trim() ?? "";
 
+const normalizeCityKey = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace("bangalore", "bengaluru");
+
+const filterZonesByCity = (zones: CityZone[], cityValue: string): CityZone[] => {
+  const cityKey = normalizeCityKey(cityValue);
+  if (!cityKey) return [];
+  return zones.filter((zone) => normalizeCityKey(zone.city) === cityKey);
+};
+
+const LOCAL_ZONES: CityZone[] = ZONES.map((zone) => ({ id: zone.id, city: zone.city, area: zone.area }));
+
 const Register = () => {
   const navigate = useNavigate();
   const [step, setStep] = useState<"phone" | "otp" | "profile">("phone");
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [name, setName] = useState("");
-  const [city, setCity] = useState("Bengaluru");
+  const [city, setCity] = useState("");
   const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([]);
   const [cityFocused, setCityFocused] = useState(false);
   const [cityLoading, setCityLoading] = useState(false);
   const [zonesLoading, setZonesLoading] = useState(false);
   const [placesReady, setPlacesReady] = useState(false);
-  const [zoneId, setZoneId] = useState(ZONES[0].id as string);
-  const [zoneArea, setZoneArea] = useState(ZONES[0].area);
-  const [displayedZones, setDisplayedZones] = useState<CityZone[]>(
-    ZONES.map((zone) => ({ id: zone.id, city: zone.city, area: zone.area })),
-  );
+  const [zoneId, setZoneId] = useState("");
+  const [zoneArea, setZoneArea] = useState("");
+  const [displayedZones, setDisplayedZones] = useState<CityZone[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [debugOtp, setDebugOtp] = useState<string | null>(null);
@@ -133,17 +146,9 @@ const Register = () => {
   useEffect(() => {
     const normalizedCity = city.trim();
     if (!normalizedCity || normalizedCity.length < 2) {
-      const fallbackZones = ZONES.map((zone) => ({ id: zone.id, city: zone.city, area: zone.area }));
-      setDisplayedZones(fallbackZones);
-      if (!fallbackZones.some((zone) => zone.id === zoneId)) {
-        setZoneId(fallbackZones[0].id);
-        setZoneArea(fallbackZones[0].area);
-      } else {
-        const currentZone = fallbackZones.find((zone) => zone.id === zoneId);
-        if (currentZone) {
-          setZoneArea(currentZone.area);
-        }
-      }
+      setDisplayedZones([]);
+      setZoneId("");
+      setZoneArea("");
       setZonesLoading(false);
       return;
     }
@@ -155,28 +160,38 @@ const Register = () => {
       getCityZones(normalizedCity)
         .then((res) => {
           if (canceled) return;
-          const zones = res.zones.length
-            ? res.zones
-            : ZONES.map((zone) => ({ id: zone.id, city: zone.city, area: zone.area }));
+          const apiFilteredZones = filterZonesByCity(res.zones, normalizedCity);
+          const localFilteredZones = filterZonesByCity(LOCAL_ZONES, normalizedCity);
+          const zones = apiFilteredZones.length ? apiFilteredZones : localFilteredZones;
 
           setDisplayedZones(zones);
-          setZoneId((currentZoneId) =>
-            zones.some((zone) => zone.id === currentZoneId) ? currentZoneId : zones[0].id,
-          );
-          setZoneArea((currentZoneArea) =>
-            zones.some((zone) => zone.area === currentZoneArea) ? currentZoneArea : zones[0].area,
-          );
+          if (zones.length === 0) {
+            setZoneId("");
+            setZoneArea("");
+          } else {
+            setZoneId((currentZoneId) =>
+              zones.some((zone) => zone.id === currentZoneId) ? currentZoneId : zones[0].id,
+            );
+            setZoneArea((currentZoneArea) =>
+              zones.some((zone) => zone.area === currentZoneArea) ? currentZoneArea : zones[0].area,
+            );
+          }
         })
         .catch(() => {
           if (canceled) return;
-          const fallbackZones = ZONES.map((zone) => ({ id: zone.id, city: zone.city, area: zone.area }));
+          const fallbackZones = filterZonesByCity(LOCAL_ZONES, normalizedCity);
           setDisplayedZones(fallbackZones);
-          setZoneId((currentZoneId) =>
-            fallbackZones.some((zone) => zone.id === currentZoneId) ? currentZoneId : fallbackZones[0].id,
-          );
-          setZoneArea((currentZoneArea) =>
-            fallbackZones.some((zone) => zone.area === currentZoneArea) ? currentZoneArea : fallbackZones[0].area,
-          );
+          if (fallbackZones.length === 0) {
+            setZoneId("");
+            setZoneArea("");
+          } else {
+            setZoneId((currentZoneId) =>
+              fallbackZones.some((zone) => zone.id === currentZoneId) ? currentZoneId : fallbackZones[0].id,
+            );
+            setZoneArea((currentZoneArea) =>
+              fallbackZones.some((zone) => zone.area === currentZoneArea) ? currentZoneArea : fallbackZones[0].area,
+            );
+          }
         })
         .finally(() => {
           if (!canceled) {
@@ -269,7 +284,7 @@ const Register = () => {
 
   return (
     <MobileShell>
-        <div className="flex flex-col min-h-screen px-4 pt-12 pb-8">
+        <div className="flex flex-col h-full px-4 pt-12 pb-8 overflow-hidden">
           {/* Progress — thin & subtle */}
           <div className="flex gap-1.5 mb-8">
             {["phone", "otp", "profile"].map((s, i) => (
@@ -397,7 +412,7 @@ const Register = () => {
           )}
 
           {step === "profile" && (
-            <div className="animate-slide-up">
+            <div className="animate-slide-up h-full flex flex-col">
               <h2 className="text-xl font-extrabold text-foreground mb-2 tracking-tight">
                 Tell us about yourself
               </h2>
@@ -462,27 +477,31 @@ const Register = () => {
                   <label className="text-sm font-semibold text-foreground mb-3 block">
                     <MapPin size={14} className="inline mr-1" /> Delivery Zone
                   </label>
-                  {zonesLoading ? (
+                  {!city.trim() ? (
+                    <p className="text-xs text-muted-foreground mb-2">Enter a city to load delivery zones.</p>
+                  ) : zonesLoading ? (
                     <p className="text-xs text-muted-foreground mb-2">Refreshing zones for {city.trim()}...</p>
                   ) : null}
-                  <div className="grid grid-cols-1 gap-2">
-                    {displayedZones.map((z) => (
-                      <button
-                        key={z.id}
-                        type="button"
-                          onClick={() => {
-                            setZoneId(z.id);
-                            setZoneArea(z.area);
-                          }}
-                        className={`px-4 py-3 rounded-xl text-sm font-semibold transition-all ${
-                          zoneId === z.id
-                            ? "bg-foreground/10 text-foreground border border-foreground/20"
-                            : "bg-secondary border border-border/40 text-foreground"
-                        }`}
-                      >
-                        {z.area}
-                      </button>
-                    ))}
+                  <div className="max-h-64 overflow-y-auto scrollbar-visible pr-1">
+                    <div className="grid grid-cols-1 gap-2">
+                      {displayedZones.map((z) => (
+                        <button
+                          key={z.id}
+                          type="button"
+                            onClick={() => {
+                              setZoneId(z.id);
+                              setZoneArea(z.area);
+                            }}
+                          className={`px-4 py-3 rounded-xl text-sm font-semibold transition-all ${
+                            zoneId === z.id
+                              ? "bg-foreground/10 text-foreground border border-foreground/20"
+                              : "bg-secondary border border-border/40 text-foreground"
+                          }`}
+                        >
+                          {z.area}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 

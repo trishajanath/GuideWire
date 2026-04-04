@@ -79,6 +79,26 @@
 }
 
 @layer utilities {
+  .scrollbar-visible {
+    -ms-overflow-style: auto;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(0 0% 35%) transparent;
+  }
+
+  .scrollbar-visible::-webkit-scrollbar {
+    display: block;
+    width: 8px;
+  }
+
+  .scrollbar-visible::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-visible::-webkit-scrollbar-thumb {
+    background: hsl(0 0% 35%);
+    border-radius: 999px;
+  }
+
   .text-balance {
     text-wrap: balance;
   }

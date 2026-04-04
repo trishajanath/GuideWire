@@ -283,6 +283,13 @@ const Policy = () => {
 
   const policyTier = (policy?.tier ?? "Standard") as PolicyTier;
   const tierDetails = tierFeatures[policyTier];
+  const planActionLabel = policyTier === "Premium" ? "Change Plan" : "Upgrade Plan";
+  const planModalTitle = policyTier === "Premium" ? "Change Policy" : "Upgrade Policy";
+  const planConfirmLabel = policyTier === "Premium" ? "Confirm Change" : "Confirm Upgrade";
+  const planOptions = useMemo(
+    () => (policyTier === "Premium" ? (["Basic", "Standard"] as PolicyTier[]) : (["Basic", "Standard", "Premium"] as PolicyTier[])),
+    [policyTier],
+  );
 
   const weeksSinceStart = useMemo(() => {
     if (!policy?.start_date) return 1;
@@ -548,7 +555,7 @@ const Policy = () => {
               onClick={() => setUpgradeOpen(true)}
               className="w-full rounded-xl px-4 py-3 bg-secondary text-foreground text-sm font-semibold"
             >
-              Upgrade Plan
+              {planActionLabel}
             </button>
           </>
         )}
@@ -660,12 +667,12 @@ const Policy = () => {
           <div className="w-full max-w-md mx-auto rounded-t-2xl bg-background border border-border/60 p-4 pb-6">
             <div className="w-12 h-1 rounded-full bg-muted mx-auto mb-4" />
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-foreground">Upgrade Policy</h3>
+              <h3 className="text-sm font-bold text-foreground">{planModalTitle}</h3>
               <button onClick={() => setUpgradeOpen(false)} className="text-xs text-muted-foreground">Close</button>
             </div>
 
             <div className="space-y-2 mb-4">
-              {(["Basic", "Standard", "Premium"] as PolicyTier[]).map((tier) => {
+              {planOptions.map((tier) => {
                 const isCurrent = policy?.tier === tier;
                 const isSelected = upgradeChoice === tier;
                 return (
@@ -707,7 +714,7 @@ const Policy = () => {
               {isBusy ? (
                 <span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Confirming...</span>
               ) : (
-                <span className="inline-flex items-center gap-2"><Wallet size={14} /> Confirm Upgrade</span>
+                <span className="inline-flex items-center gap-2"><Wallet size={14} /> {planConfirmLabel}</span>
               )}
             </button>
           </div>
