@@ -134,7 +134,7 @@ function buildFraudAssessment(result: ClaimEvaluateResult): FraudAssessment | nu
       layer: item.label.toLowerCase().replace(/ /g, "_"),
       score: item.value,
       confidence: item.weight,
-      reason: `${item.label}: ${item.value === 0 ? "✓ Clear" : `⚠ Flagged ${(item.value * 100).toFixed(0)}%`}`,
+      reason: `${item.label}: ${item.value < 0.3 ? "✓ Clear" : `⚠ Flagged ${(item.value * 100).toFixed(0)}%`}`,
       details: { weight: item.weight, contribution: item.contribution },
     })),
     explanation:

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { AlertTriangle, IndianRupee, CloudRain, ArrowLeft, Loader2, CheckCircle2, Zap, Shield, Sparkles } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+import { AlertTriangle, IndianRupee, CloudRain, ArrowLeft, Loader2, CheckCircle2, Zap, Shield, Sparkles, Clock, ChevronDown, ChevronUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -113,6 +113,43 @@ const pickOne = <T,>(items: T[]) => items[Math.floor(Math.random() * items.lengt
 const pickManyUnique = <T,>(items: T[], count: number) => {
   const shuffled = [...items].sort(() => Math.random() - 0.5);
   return shuffled.slice(0, Math.max(1, Math.min(count, shuffled.length)));
+};
+
+const severityLabel = (multiplier: number): { label: string; color: string } => {
+  if (multiplier >= 1.35) return { label: "High", color: "text-destructive" };
+  if (multiplier >= 1.2) return { label: "Medium", color: "text-warning" };
+  return { label: "Low", color: "text-accent-green" };
+};
+
+const severityBg = (multiplier: number): string => {
+  if (multiplier >= 1.35) return "bg-destructive/15";
+  if (multiplier >= 1.2) return "bg-warning/15";
+  return "bg-accent-green/15";
+};
+
+type GeneratedAlert = {
+  id: number;
+  seed: number;
+  trigger: { trigger: boolean; type: string; severity: number };
+  risk: { zone: string; weather_risk_score: number; trigger_probability: number; trigger_type: string };
+  imdAlert: IMDAlert | null;
+  claimResult: ClaimEvaluateResult;
+  timeline: { detected: Date; processed: Date; credited: Date };
+};
+
+const formatTime = (d: Date) => d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+
+const getFraudReasons = (claimResult: ClaimEvaluateResult): string[] => {
+  const reasons: string[] = [];
+  const fired = claimResult.trigger_list?.find((t) => t.fired);
+  if (!fired?.fraud) return reasons;
+  for (const b of fired.fraud.breakdown) {
+    if (b.contribution > 0.05) reasons.push(b.label);
+  }
+  if (reasons.length === 0 && claimResult.fraud_score > 0.25) {
+    reasons.push("Multiple signals flagged");
+  }
+  return reasons;
 };
 
 const buildMockClaimResult = (params: {
@@ -262,6 +299,9 @@ const TriggerAlert = () => {
   const [showFraudDetails, setShowFraudDetails] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generatedSeed, setGeneratedSeed] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const [generatedAlerts, setGeneratedAlerts] = useState<GeneratedAlert[]>([]);
+  const [expandedAlert, setExpandedAlert] = useState<number | null>(null);
 
   const selectedPlan = user?.selectedPlan;
   const userId = user?.backendUserId;
@@ -334,19 +374,43 @@ const TriggerAlert = () => {
     setAutoClaimed(true);
     setError("");
     try {
-      const simulation = buildMockAlertState({
-        zoneId,
-        city,
-        zoneName,
-        hoursLost: 2,
-        workerId: userId,
-      });
+      const alertCount = 2 + Math.floor(Math.random() * 3); // 2-4 alerts
+      const alerts: GeneratedAlert[] = [];
+      const now = new Date();
 
-      setGeneratedSeed(simulation.seed);
-      setClaimResult(simulation.claimResult);
-      setTrigger(simulation.trigger);
-      setRisk(simulation.risk);
-      setImdAlert(simulation.imdAlert);
+      for (let i = 0; i < alertCount; i++) {
+        const simulation = buildMockAlertState({
+          zoneId,
+          city,
+          zoneName,
+          hoursLost: 1 + Math.floor(Math.random() * 3),
+          workerId: userId,
+        });
+        const offsetMs = i * (90_000 + Math.floor(Math.random() * 120_000)); // stagger 1.5-3.5min apart
+        const detected = new Date(now.getTime() - (alertCount - i) * 300_000 + offsetMs);
+        const processed = new Date(detected.getTime() + 60_000 + Math.floor(Math.random() * 90_000));
+        const credited = new Date(processed.getTime() + 30_000 + Math.floor(Math.random() * 60_000));
+
+        alerts.push({
+          id: i,
+          seed: simulation.seed,
+          trigger: simulation.trigger,
+          risk: simulation.risk,
+          imdAlert: simulation.imdAlert,
+          claimResult: simulation.claimResult,
+          timeline: { detected, processed, credited },
+        });
+      }
+
+      setGeneratedAlerts(alerts);
+      // Set the first alert as the "active" one for backward compat
+      const first = alerts[0];
+      setGeneratedSeed(first.seed);
+      setClaimResult(first.claimResult);
+      setTrigger(first.trigger);
+      setRisk(first.risk);
+      setImdAlert(first.imdAlert);
+      setExpandedAlert(0);
       setClaiming(false);
     } catch (err: any) {
       setError(err?.message ?? "Could not generate situations");
@@ -429,9 +493,6 @@ const TriggerAlert = () => {
               <CheckCircle2 size={32} className="text-accent-green mx-auto mb-3" strokeWidth={1.5} />
               <h3 className="text-base font-extrabold text-foreground mb-1">All Clear</h3>
               <p className="text-sm text-muted-foreground">No active triggers for {zoneName}</p>
-              {generatedSeed !== null && (
-                <p className="mt-2 text-[11px] text-muted-foreground/60">Generated mock seed #{generatedSeed}</p>
-              )}
             </div>
           </>
         ) : (
@@ -439,116 +500,273 @@ const TriggerAlert = () => {
             {/* Status banner — minimal */}
             <div className="flex items-center gap-3 mb-6">
               <div className="w-2 h-2 rounded-full bg-warning animate-pulse" />
-              <p className="text-sm font-semibold text-foreground">Trigger active · income disruption detected</p>
+              <p className="text-sm font-semibold text-foreground">
+                {generatedAlerts.length > 1
+                  ? `${generatedAlerts.length} triggers active · income disruption detected`
+                  : "Trigger active · income disruption detected"}
+              </p>
             </div>
 
-            {/* Event hero */}
-            <div className="card-premium rounded-2xl p-5 mb-5">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-base font-bold text-foreground capitalize">{triggerType}</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">{zoneName} Zone</p>
-                </div>
-                <CloudRain size={24} className="text-muted-foreground/40" strokeWidth={1.5} />
-              </div>
+            {/* Multi-alert list OR single alert */}
+            {generatedAlerts.length > 1 ? (
+              <div className="space-y-3 mb-5">
+                {generatedAlerts.map((alert) => {
+                  const alertType = alert.trigger?.type?.replace(/_/g, " ") ?? "Unknown";
+                  const sev = severityLabel(alert.trigger.severity);
+                  const alertFired = alert.claimResult?.trigger_list?.find((t) => t.fired);
+                  const isExpanded = expandedAlert === alert.id;
+                  const fraudReasons = getFraudReasons(alert.claimResult);
+                  const fraudPct = Math.round(alert.claimResult.fraud_score * 100);
+                  const fraudLevel = fraudPct < 30 ? "Low" : fraudPct < 60 ? "Medium" : "High";
+                  const fraudLevelColor = fraudPct < 30 ? "text-accent-green" : fraudPct < 60 ? "text-warning" : "text-destructive";
+                  const fraudLevelBg = fraudPct < 30 ? "bg-accent-green/15" : fraudPct < 60 ? "bg-warning/15" : "bg-destructive/15";
 
-              {generatedSeed !== null && (
-                <div className="mb-4 rounded-xl border border-border/40 bg-secondary/30 px-3 py-2">
-                  <p className="text-[11px] text-muted-foreground">Mock situation generated from seed #{generatedSeed}</p>
-                  <p className="text-[11px] text-muted-foreground/70 mt-0.5">
-                    This is randomized UI data for weather, platform, or external-event triggers.
-                  </p>
-                </div>
-              )}
+                  return (
+                    <div key={alert.id} className="card-premium rounded-2xl overflow-hidden">
+                      {/* Collapsed header — always visible */}
+                      <button
+                        onClick={() => setExpandedAlert(isExpanded ? null : alert.id)}
+                        className="w-full p-4 flex items-center justify-between gap-3 text-left"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <CloudRain size={18} className="text-muted-foreground/50 shrink-0" strokeWidth={1.5} />
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-foreground capitalize truncate">{alertType}</p>
+                            <p className="text-[11px] text-muted-foreground">{zoneName} Zone</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="text-lg font-extrabold text-foreground">₹{alert.claimResult.payout_amount}</span>
+                          {isExpanded ? <ChevronUp size={16} className="text-muted-foreground" /> : <ChevronDown size={16} className="text-muted-foreground" />}
+                        </div>
+                      </button>
 
-              {/* Flat rows */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Severity</span>
-                  <span className="text-xs font-bold text-foreground">
-                    {((trigger?.severity ?? 0) * 100).toFixed(0)}%
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Risk score</span>
-                  <span className="text-xs font-bold text-foreground">
-                    {risk?.weather_risk_score ?? "--"}/100
-                  </span>
-                </div>
-                <div className="flex items-center justify-between pt-2 border-t border-border/30">
-                  <span className="text-xs text-muted-foreground">Estimated payout</span>
-                  <span className="text-lg font-extrabold text-foreground">
-                    ₹{claimResult?.payout_amount ?? "--"}
-                  </span>
-                </div>
-              </div>
-            </div>
+                      {/* Expanded detail */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 space-y-4">
+                          {/* Simulated event note */}
+                          <div className="rounded-xl border border-border/40 bg-secondary/30 px-3 py-2">
+                            <p className="text-[11px] text-muted-foreground">Simulated event based on current conditions</p>
+                          </div>
 
-            {/* Claim status */}
-            {claiming ? (
-              <div className="card-premium rounded-2xl p-5 mb-5 text-center">
-                <Loader2 size={18} className="animate-spin text-muted-foreground mx-auto mb-2" />
-                <p className="text-sm font-medium text-muted-foreground">Processing claim...</p>
-              </div>
-            ) : claimResult ? (
-              <div className="card-premium rounded-2xl p-5 mb-5 text-center">
-                {claimResult.claim_status === "auto-approve" || claimResult.claim_status === "approve-with-flag" ? (
-                  <>
-                    <CheckCircle2 size={24} className="text-accent-green mx-auto mb-2" strokeWidth={1.5} />
-                    <p className="text-xl font-extrabold text-foreground mb-1">
-                      ₹{claimResult.payout_amount}
-                    </p>
-                    <p className="text-xs text-muted-foreground mb-2">Credited to your account</p>
-                    {firstFired?.payout?.formula && (
-                      <p className="text-[11px] text-muted-foreground/60">{firstFired.payout.formula}</p>
-                    )}
-                    <div className="flex items-center justify-center gap-1.5 mt-3">
-                      <Zap size={11} className="text-accent-green" strokeWidth={1.5} />
-                      <span className="text-[10px] font-semibold text-muted-foreground">Zero-touch · Auto-processed</span>
+                          {/* Stats */}
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-muted-foreground">Severity</span>
+                              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${severityBg(alert.trigger.severity)} ${sev.color}`}>{sev.label}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-muted-foreground">Risk score</span>
+                              <span className="text-xs font-bold text-foreground">{alert.risk.weather_risk_score}/100</span>
+                            </div>
+                          </div>
+
+                          {/* HERO Payout */}
+                          <div className="rounded-2xl bg-accent-green/[0.07] border border-accent-green/20 p-5 text-center">
+                            <CheckCircle2 size={28} className="text-accent-green mx-auto mb-2" strokeWidth={1.5} />
+                            <p className="text-3xl font-black text-foreground tracking-tight">₹{alert.claimResult.payout_amount}</p>
+                            <p className="text-sm font-semibold text-accent-green mt-1">Credited instantly</p>
+                            {alertFired?.payout?.formula && (
+                              <p className="text-[11px] text-muted-foreground/60 mt-2">{alertFired.payout.formula}</p>
+                            )}
+                            <div className="flex items-center justify-center gap-1.5 mt-3">
+                              <Zap size={12} className="text-accent-green" strokeWidth={1.5} />
+                              <span className="text-[11px] font-bold text-accent-green">Zero-touch payout</span>
+                            </div>
+                          </div>
+
+                          {/* Fraud Score — Actionable */}
+                          <div className="card-premium rounded-xl p-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <Shield size={16} className={fraudLevelColor} strokeWidth={1.5} />
+                                <span className="text-sm font-semibold text-foreground">Fraud Risk: {fraudLevel}</span>
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${fraudLevelBg} ${fraudLevelColor}`}>{fraudPct}%</span>
+                              </div>
+                            </div>
+                            {fraudReasons.length > 0 && (
+                              <div className="mt-2 space-y-1">
+                                {fraudReasons.map((r, i) => (
+                                  <p key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                                    <span className="text-muted-foreground/60 mt-px">•</span> {r}
+                                  </p>
+                                ))}
+                              </div>
+                            )}
+                            {fraudReasons.length === 0 && (
+                              <p className="text-[11px] text-muted-foreground mt-1">No suspicious signals detected</p>
+                            )}
+                          </div>
+
+                          {/* Timeline */}
+                          <div className="rounded-xl border border-border/40 bg-secondary/20 p-4">
+                            <p className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-wider mb-3">Processing Timeline</p>
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-3">
+                                <div className="w-2 h-2 rounded-full bg-warning" />
+                                <div className="flex-1 flex items-center justify-between">
+                                  <span className="text-xs text-foreground font-medium">Trigger detected</span>
+                                  <span className="text-xs text-muted-foreground font-mono">{formatTime(alert.timeline.detected)}</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <div className="w-2 h-2 rounded-full bg-primary" />
+                                <div className="flex-1 flex items-center justify-between">
+                                  <span className="text-xs text-foreground font-medium">Claim processed</span>
+                                  <span className="text-xs text-muted-foreground font-mono">{formatTime(alert.timeline.processed)}</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <div className="w-2 h-2 rounded-full bg-accent-green" />
+                                <div className="flex-1 flex items-center justify-between">
+                                  <span className="text-xs text-foreground font-medium">Amount credited</span>
+                                  <span className="text-xs text-muted-foreground font-mono">{formatTime(alert.timeline.credited)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </>
-                ) : (
-                  <>
-                    <Shield size={24} className="text-muted-foreground mx-auto mb-2" strokeWidth={1.5} />
-                    <p className="text-sm font-bold text-foreground mb-1">
-                      {claimResult.claim_status === "hold-for-review" ? "Under Review" : "Processed"}
-                    </p>
-                    <p className="text-xs text-muted-foreground">{claimResult.explanation}</p>
-                    {claimResult.fraud_score > 0 && (
-                      <p className="text-[10px] text-muted-foreground/60 mt-1">
-                        Fraud score: {(claimResult.fraud_score * 100).toFixed(0)}%
-                      </p>
-                    )}
-                  </>
-                )}
+                  );
+                })}
               </div>
             ) : (
-              <div className="card-premium rounded-2xl p-4 mb-5 text-center">
-                <p className="text-xs font-medium text-muted-foreground">
-                  {generatedSeed !== null ? "Mock trigger generated. Payout will be shown automatically." : "Payout will be credited automatically"}
+              <>
+                {/* Single alert — original flow with improvements */}
+                <div className="card-premium rounded-2xl p-5 mb-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-base font-bold text-foreground capitalize">{triggerType}</h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">{zoneName} Zone</p>
+                    </div>
+                    <CloudRain size={24} className="text-muted-foreground/40" strokeWidth={1.5} />
+                  </div>
+
+                  {generatedSeed !== null && (
+                    <div className="mb-4 rounded-xl border border-border/40 bg-secondary/30 px-3 py-2">
+                      <p className="text-[11px] text-muted-foreground">Simulated event based on current conditions</p>
+                    </div>
+                  )}
+
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Severity</span>
+                      {(() => { const sev = severityLabel(trigger?.severity ?? 0); return (
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${severityBg(trigger?.severity ?? 0)} ${sev.color}`}>{sev.label}</span>
+                      ); })()}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Risk score</span>
+                      <span className="text-xs font-bold text-foreground">{risk?.weather_risk_score ?? "--"}/100</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* HERO Payout */}
+                {claiming ? (
+                  <div className="card-premium rounded-2xl p-5 mb-5 text-center">
+                    <Loader2 size={18} className="animate-spin text-muted-foreground mx-auto mb-2" />
+                    <p className="text-sm font-medium text-muted-foreground">Processing claim...</p>
+                  </div>
+                ) : claimResult ? (
+                  <div className="rounded-2xl bg-accent-green/[0.07] border border-accent-green/20 p-6 mb-5 text-center">
+                    {claimResult.claim_status === "auto-approve" || claimResult.claim_status === "approve-with-flag" ? (
+                      <>
+                        <CheckCircle2 size={32} className="text-accent-green mx-auto mb-2" strokeWidth={1.5} />
+                        <p className="text-3xl font-black text-foreground tracking-tight mb-1">₹{claimResult.payout_amount}</p>
+                        <p className="text-sm font-semibold text-accent-green mb-2">Credited instantly</p>
+                        {firstFired?.payout?.formula && (
+                          <p className="text-[11px] text-muted-foreground/60">{firstFired.payout.formula}</p>
+                        )}
+                        <div className="flex items-center justify-center gap-1.5 mt-3">
+                          <Zap size={12} className="text-accent-green" strokeWidth={1.5} />
+                          <span className="text-[11px] font-bold text-accent-green">Zero-touch payout</span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <Shield size={28} className="text-muted-foreground mx-auto mb-2" strokeWidth={1.5} />
+                        <p className="text-sm font-bold text-foreground mb-1">
+                          {claimResult.claim_status === "hold-for-review" ? "Under Review" : "Processed"}
+                        </p>
+                        <p className="text-xs text-muted-foreground">{claimResult.explanation}</p>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="card-premium rounded-2xl p-4 mb-5 text-center">
+                    <p className="text-xs font-medium text-muted-foreground">Payout will be credited automatically</p>
+                  </div>
+                )}
+
+                {!claimResult && !claiming && userId && (
+                  <Button
+                    onClick={handleManualClaim}
+                    className="w-full h-14 text-base font-bold rounded-2xl bg-foreground border-0 text-background hover:bg-foreground/90 mb-5"
+                  >
+                    Claim Now
+                  </Button>
+                )}
+
+                {/* Fraud Score — Actionable */}
+                {claimResult && claimResult.fraud_score > 0 && (() => {
+                  const fraudPct = Math.round(claimResult.fraud_score * 100);
+                  const fraudLevel = fraudPct < 30 ? "Low" : fraudPct < 60 ? "Medium" : "High";
+                  const fraudLevelColor = fraudPct < 30 ? "text-accent-green" : fraudPct < 60 ? "text-warning" : "text-destructive";
+                  const fraudLevelBg = fraudPct < 30 ? "bg-accent-green/15" : fraudPct < 60 ? "bg-warning/15" : "bg-destructive/15";
+                  const fraudReasons = getFraudReasons(claimResult);
+                  return (
+                    <div className="card-premium rounded-xl p-4 mb-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Shield size={16} className={fraudLevelColor} strokeWidth={1.5} />
+                          <span className="text-sm font-semibold text-foreground">Fraud Risk: {fraudLevel}</span>
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${fraudLevelBg} ${fraudLevelColor}`}>{fraudPct}%</span>
+                        </div>
+                      </div>
+                      {fraudReasons.length > 0 ? (
+                        <div className="mt-2 space-y-1">
+                          {fraudReasons.map((r, i) => (
+                            <p key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                              <span className="text-muted-foreground/60 mt-px">•</span> {r}
+                            </p>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground mt-1">No suspicious signals detected</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Fraud Analysis (legacy server-side) */}
+                {fraudData && (
+                  <div className="mb-4">
+                    <FraudBreakdown assessment={fraudData} compact={!showFraudDetails} />
+                    <button
+                      onClick={() => setShowFraudDetails((v) => !v)}
+                      className="w-full mt-2 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {showFraudDetails ? "Hide details" : "Show fraud analysis →"}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Total payout summary for multi-alerts */}
+            {generatedAlerts.length > 1 && (
+              <div className="rounded-2xl bg-accent-green/[0.07] border border-accent-green/20 p-5 mb-5 text-center">
+                <p className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-wider mb-2">Total Payout</p>
+                <p className="text-4xl font-black text-foreground tracking-tight">
+                  ₹{generatedAlerts.reduce((sum, a) => sum + (a.claimResult.payout_amount ?? 0), 0)}
                 </p>
-              </div>
-            )}
-
-            {!claimResult && !claiming && userId && (
-              <Button
-                onClick={handleManualClaim}
-                className="w-full h-14 text-base font-bold rounded-2xl bg-foreground border-0 text-background hover:bg-foreground/90 mb-5"
-              >
-                Claim Now
-              </Button>
-            )}
-
-            {/* Fraud Analysis */}
-            {fraudData && (
-              <div className="mb-4">
-                <FraudBreakdown assessment={fraudData} compact={!showFraudDetails} />
-                <button
-                  onClick={() => setShowFraudDetails((v) => !v)}
-                  className="w-full mt-2 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showFraudDetails ? "Hide details" : "Show fraud analysis →"}
-                </button>
+                <p className="text-sm font-semibold text-accent-green mt-1">Credited instantly</p>
+                <div className="flex items-center justify-center gap-1.5 mt-3">
+                  <Zap size={12} className="text-accent-green" strokeWidth={1.5} />
+                  <span className="text-[11px] font-bold text-accent-green">Zero-touch · {generatedAlerts.length} events auto-processed</span>
+                </div>
               </div>
             )}
 

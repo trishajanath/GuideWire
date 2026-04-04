@@ -4,7 +4,6 @@ import {
   Clock3,
   Flame,
   Loader2,
-  MapPin,
   RadioTower,
   ShieldAlert,
   ShieldCheck,
@@ -16,8 +15,6 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   evaluateClaimEngine,
-  getCityWeather,
-  type CityWeather,
   type ClaimEvaluateResult,
   ZONES,
 } from "@/lib/api";
@@ -95,9 +92,7 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
   const [selectedZone, setSelectedZone] = useState(zoneId);
   const [selectedScenarios, setSelectedScenarios] = useState<Set<SimulationScenario["id"]>>(new Set());
   const [hoursLost, setHoursLost] = useState(3);
-  const [weather, setWeather] = useState<CityWeather | null>(null);
   const [result, setResult] = useState<ClaimEvaluateResult | null>(null);
-  const [loadingLive, setLoadingLive] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
 
@@ -182,19 +177,6 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
     }
   };
 
-  const fetchBaseline = async () => {
-    setLoadingLive(true);
-    setError("");
-    try {
-      const live = await getCityWeather(city);
-      setWeather(live);
-    } catch (err: any) {
-      setError(err?.message ?? "Could not fetch live weather");
-    } finally {
-      setLoadingLive(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-3">
@@ -234,25 +216,6 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
             />
           </label>
         </div>
-
-        <Button onClick={fetchBaseline} variant="outline" className="w-full h-10 rounded-xl border-border/40">
-          {loadingLive ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <MapPin className="w-4 h-4 mr-2" />}
-          Fetch Live Baseline
-        </Button>
-
-        {weather && (
-          <div className="rounded-xl border border-border/50 bg-secondary/40 p-3 text-xs text-muted-foreground">
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-semibold text-foreground">Live baseline</span>
-              <span>{weather.city}</span>
-            </div>
-            <div className="mt-1.5 flex flex-wrap gap-2">
-              <span className="rounded-full bg-foreground/5 px-2 py-0.5">{Math.round(weather.temperature)}°C</span>
-              <span className="rounded-full bg-foreground/5 px-2 py-0.5">Rain {weather.rainfall} mm</span>
-              <span className="rounded-full bg-foreground/5 px-2 py-0.5">Risk {weather.weather_risk_score}/100</span>
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="space-y-3">

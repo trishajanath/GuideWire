@@ -1,62 +1,73 @@
 import { Shield, MapPin, BarChart3, Navigation, Brain, CheckCircle2, AlertTriangle, XCircle, Smartphone, Copy, Wifi } from "lucide-react";
 import type { FraudSignal, FraudAssessment } from "@/lib/api";
 
-const LAYER_META: Record<string, { label: string; icon: typeof Shield; description: string }> = {
+const LAYER_META: Record<string, { label: string; icon: typeof Shield; clearDesc: string; flaggedDesc: string }> = {
   gps_in_registered_zone: {
     label: "GPS Verification",
     icon: MapPin,
-    description: "Location matches registered work zone",
+    clearDesc: "Location matches registered work zone",
+    flaggedDesc: "GPS location outside registered work zone",
   },
   app_active_during_event: {
     label: "App Activity",
     icon: Smartphone,
-    description: "App was open during the event",
+    clearDesc: "App was open during the event",
+    flaggedDesc: "App was not active during the event",
   },
   zone_worker_ratio: {
     label: "Zone Activity",
     icon: BarChart3,
-    description: "Worker density is within normal range",
+    clearDesc: "Worker density is within normal range",
+    flaggedDesc: "Abnormal worker density — isolated claim",
   },
   no_duplicate_claim: {
     label: "Duplicate Check",
     icon: Copy,
-    description: "No repeat claim on the same trigger",
+    clearDesc: "No repeat claim on the same trigger",
+    flaggedDesc: "Duplicate claim detected on same trigger event",
   },
   claim_frequency_vs_zone_average: {
     label: "Claim Frequency",
     icon: Navigation,
-    description: "Claiming rate vs zone average",
+    clearDesc: "Claiming rate vs zone average is normal",
+    flaggedDesc: "Claiming rate exceeds zone average",
   },
   "vpn_/_proxy_detection": {
     label: "Network Check",
     icon: Wifi,
-    description: "Residential IP, no VPN detected",
+    clearDesc: "Residential IP, no VPN detected",
+    flaggedDesc: "VPN or proxy detected — datacenter IP",
   },
   // Legacy keys
   gps_consistency: {
     label: "GPS Consistency",
     icon: MapPin,
-    description: "Location matches claimed zone",
+    clearDesc: "Location matches claimed zone",
+    flaggedDesc: "GPS location inconsistent with claimed zone",
   },
   claim_frequency: {
     label: "Claim Frequency",
     icon: BarChart3,
-    description: "Normal claiming patterns",
+    clearDesc: "Normal claiming patterns",
+    flaggedDesc: "Abnormal claiming frequency detected",
   },
   location_disruption: {
     label: "Zone Disruption Match",
     icon: Navigation,
-    description: "Real disruption in claimed area",
+    clearDesc: "Real disruption confirmed in claimed area",
+    flaggedDesc: "No disruption detected in claimed area",
   },
   velocity_check: {
     label: "Velocity / Spoofing",
     icon: Navigation,
-    description: "No impossible travel detected",
+    clearDesc: "No impossible travel detected",
+    flaggedDesc: "Impossible travel speed — GPS spoofing likely",
   },
   behavioral: {
     label: "Behavioral Analysis",
     icon: Brain,
-    description: "Normal worker activity patterns",
+    clearDesc: "Normal worker activity patterns",
+    flaggedDesc: "Suspicious behavioral patterns detected",
   },
 };
 
@@ -89,9 +100,12 @@ function LayerCard({ signal }: { signal: FraudSignal }) {
   const meta = LAYER_META[signal.layer] || {
     label: signal.layer,
     icon: Shield,
-    description: "",
+    clearDesc: "",
+    flaggedDesc: "",
   };
   const Icon = meta.icon;
+  const isFlagged = signal.score >= 0.3;
+  const description = isFlagged ? (meta.flaggedDesc || meta.clearDesc) : meta.clearDesc;
   const StatusIcon = signal.score < 0.3 ? CheckCircle2 : signal.score < 0.6 ? AlertTriangle : XCircle;
 
   return (
@@ -101,7 +115,7 @@ function LayerCard({ signal }: { signal: FraudSignal }) {
           <Icon className={`w-4 h-4 ${scoreColor(signal.score)}`} strokeWidth={1.5} />
           <div>
             <p className="text-sm font-semibold text-foreground">{meta.label}</p>
-            <p className="text-xs text-muted-foreground">{meta.description}</p>
+            <p className="text-xs text-muted-foreground">{description}</p>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
