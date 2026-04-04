@@ -2,6 +2,7 @@ export type FairRouteUser = {
   name: string;
   phone: string;
   city: string;
+  zoneArea?: string;
   platform: string;
   selectedPlan?: string;
   upiId?: string;

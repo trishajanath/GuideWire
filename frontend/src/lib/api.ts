@@ -39,6 +39,7 @@ export interface RegisterPayload {
   phone: string;
   city: string;
   platform: "Swiggy" | "Zomato";
+  zone_area?: string;
 }
 
 export const registerUser = (data: RegisterPayload) =>
@@ -46,6 +47,30 @@ export const registerUser = (data: RegisterPayload) =>
     method: "POST",
     body: JSON.stringify(data),
   });
+
+export interface CityZone {
+  id: string;
+  city: string;
+  area: string;
+}
+
+export const getCityZones = (city: string) =>
+  request<{ city: string; zones: CityZone[] }>(`/api/city-zones?city=${encodeURIComponent(city)}`);
+
+export interface CityWeather {
+  city: string;
+  condition: string;
+  temperature: number;
+  humidity: number;
+  wind_speed: number;
+  rainfall: number;
+  weather_risk_score: number;
+  trigger_probability: number;
+  trigger_type: string;
+}
+
+export const getCityWeather = (city: string) =>
+  request<CityWeather>(`/api/city/weather?city=${encodeURIComponent(city)}`);
 
 /* ---- Plan selection ---- */
 
@@ -154,7 +179,13 @@ export const calculatePayout = (
 
 export interface TriggerEvaluatePayload {
   worker_id: string;
-  weather: { rainfall: number; temperature: number };
+  weather: {
+    rainfall: number;
+    temperature: number;
+    visibility_meters?: number;
+    urban_flooding?: boolean;
+    imd_alert_level?: "none" | "yellow" | "orange" | "red";
+  };
   platform: { current_orders: number; average_orders: number; orders_last_3_hours: number };
   worker_activity: { is_logged_in: boolean; active_hours: number };
   fraud_signals?: {
@@ -170,6 +201,7 @@ export interface TriggerDecision {
   fraud_risk: string;
   payout: number;
   message: string;
+  trigger_type?: string;
 }
 
 export const evaluateTrigger = (data: TriggerEvaluatePayload) =>

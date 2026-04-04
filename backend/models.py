@@ -35,6 +35,7 @@ class TriggerDecisionResponse(BaseModel):
     fraud_risk: str
     payout: float = Field(0, ge=0)
     message: str
+    trigger_type: str | None = None
 
 
 class WeatherRiskResponse(BaseModel):

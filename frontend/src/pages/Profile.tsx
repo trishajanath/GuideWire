@@ -3,16 +3,14 @@ import { useNavigate } from "react-router-dom";
 import MobileShell from "@/components/MobileShell";
 import BottomNav from "@/components/BottomNav";
 import { clearCurrentUser, formatIndianPhone, getCurrentUser } from "@/lib/session";
-import { ZONES } from "@/lib/api";
 
 const Profile = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
-  const zone = ZONES.find((z) => z.id === user?.zoneId);
 
   const menuItems = [
     { icon: Shield, label: "My Plan", desc: user?.selectedPlan ?? "No plan selected" },
-    { icon: MapPin, label: "Zone", desc: zone ? `${zone.area}, ${zone.city}` : "Not set" },
+    { icon: MapPin, label: "Zone", desc: user?.zoneArea ? `${user.zoneArea}, ${user.city}` : user?.city ?? "Not set" },
     { icon: CreditCard, label: "Payment Methods", desc: user?.upiId ? "UPI linked" : "Not linked" },
     { icon: HelpCircle, label: "Help & Support", desc: "FAQs, contact us" },
   ];

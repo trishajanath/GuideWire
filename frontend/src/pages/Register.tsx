@@ -1,13 +1,21 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Smartphone, ArrowRight, Loader2, MapPin, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import MobileShell from "@/components/MobileShell";
 import { saveCurrentUser } from "@/lib/session";
-import { registerUser, sendOTP, verifyOTP, ZONES } from "@/lib/api";
+import { CityZone, getCityZones, registerUser, sendOTP, verifyOTP, ZONES } from "@/lib/api";
 
 /* Bangalore delivery zones */
+
+type CitySuggestion = {
+  placeId: string;
+  primaryText: string;
+  description: string;
+};
+
+const GOOGLE_PLACES_API_KEY = import.meta.env.VITE_GOOGLE_PLACES_API_KEY?.trim() ?? "";
 
 const Register = () => {
   const navigate = useNavigate();
@@ -15,11 +23,173 @@ const Register = () => {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [name, setName] = useState("");
+  const [city, setCity] = useState("Bengaluru");
+  const [citySuggestions, setCitySuggestions] = useState<CitySuggestion[]>([]);
+  const [cityFocused, setCityFocused] = useState(false);
+  const [cityLoading, setCityLoading] = useState(false);
+  const [zonesLoading, setZonesLoading] = useState(false);
+  const [placesReady, setPlacesReady] = useState(false);
   const [zoneId, setZoneId] = useState(ZONES[0].id as string);
-  const [platform, setPlatform] = useState<"Swiggy" | "Zomato">("Swiggy");
+  const [zoneArea, setZoneArea] = useState(ZONES[0].area);
+  const [displayedZones, setDisplayedZones] = useState<CityZone[]>(
+    ZONES.map((zone) => ({ id: zone.id, city: zone.city, area: zone.area })),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [debugOtp, setDebugOtp] = useState<string | null>(null);
+  const cityBlurTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!GOOGLE_PLACES_API_KEY) return;
+
+    const googleMaps = (window as any).google?.maps;
+    if (googleMaps?.places) {
+      setPlacesReady(true);
+      return;
+    }
+
+    const scriptId = "fairroute-google-places-script";
+    const existingScript = document.getElementById(scriptId) as HTMLScriptElement | null;
+    const handleReady = () => setPlacesReady(true);
+
+    if (existingScript) {
+      existingScript.addEventListener("load", handleReady);
+      return () => {
+        existingScript.removeEventListener("load", handleReady);
+      };
+    }
+
+    const script = document.createElement("script");
+    script.id = scriptId;
+    script.async = true;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_PLACES_API_KEY)}&libraries=places`;
+    script.addEventListener("load", handleReady);
+    document.head.appendChild(script);
+
+    return () => {
+      script.removeEventListener("load", handleReady);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!placesReady || city.trim().length < 2) {
+      setCitySuggestions([]);
+      setCityLoading(false);
+      return;
+    }
+
+    let canceled = false;
+    setCityLoading(true);
+
+    const timer = window.setTimeout(() => {
+      const googleMaps = (window as any).google?.maps;
+      const AutocompleteService = googleMaps?.places?.AutocompleteService;
+      const service = AutocompleteService ? new AutocompleteService() : null;
+      if (!service) {
+        if (!canceled) {
+          setCitySuggestions([]);
+          setCityLoading(false);
+        }
+        return;
+      }
+
+      service.getPlacePredictions(
+        {
+          input: city,
+          types: ["(cities)"],
+        },
+        (predictions: any[] | null, status: string) => {
+          if (canceled) return;
+          if (status === "OK" && predictions?.length) {
+            setCitySuggestions(
+              predictions.slice(0, 6).map((prediction) => ({
+                placeId: prediction.place_id,
+                primaryText: prediction.structured_formatting?.main_text ?? prediction.description,
+                description: prediction.description,
+              })),
+            );
+          } else {
+            setCitySuggestions([]);
+          }
+          setCityLoading(false);
+        },
+      );
+    }, 250);
+
+    return () => {
+      canceled = true;
+      window.clearTimeout(timer);
+    };
+  }, [city, placesReady]);
+
+  useEffect(() => {
+    return () => {
+      if (cityBlurTimerRef.current !== null) {
+        window.clearTimeout(cityBlurTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const normalizedCity = city.trim();
+    if (!normalizedCity || normalizedCity.length < 2) {
+      const fallbackZones = ZONES.map((zone) => ({ id: zone.id, city: zone.city, area: zone.area }));
+      setDisplayedZones(fallbackZones);
+      if (!fallbackZones.some((zone) => zone.id === zoneId)) {
+        setZoneId(fallbackZones[0].id);
+        setZoneArea(fallbackZones[0].area);
+      } else {
+        const currentZone = fallbackZones.find((zone) => zone.id === zoneId);
+        if (currentZone) {
+          setZoneArea(currentZone.area);
+        }
+      }
+      setZonesLoading(false);
+      return;
+    }
+
+    let canceled = false;
+    setZonesLoading(true);
+
+    const timer = window.setTimeout(() => {
+      getCityZones(normalizedCity)
+        .then((res) => {
+          if (canceled) return;
+          const zones = res.zones.length
+            ? res.zones
+            : ZONES.map((zone) => ({ id: zone.id, city: zone.city, area: zone.area }));
+
+          setDisplayedZones(zones);
+          setZoneId((currentZoneId) =>
+            zones.some((zone) => zone.id === currentZoneId) ? currentZoneId : zones[0].id,
+          );
+          setZoneArea((currentZoneArea) =>
+            zones.some((zone) => zone.area === currentZoneArea) ? currentZoneArea : zones[0].area,
+          );
+        })
+        .catch(() => {
+          if (canceled) return;
+          const fallbackZones = ZONES.map((zone) => ({ id: zone.id, city: zone.city, area: zone.area }));
+          setDisplayedZones(fallbackZones);
+          setZoneId((currentZoneId) =>
+            fallbackZones.some((zone) => zone.id === currentZoneId) ? currentZoneId : fallbackZones[0].id,
+          );
+          setZoneArea((currentZoneArea) =>
+            fallbackZones.some((zone) => zone.area === currentZoneArea) ? currentZoneArea : fallbackZones[0].area,
+          );
+        })
+        .finally(() => {
+          if (!canceled) {
+            setZonesLoading(false);
+          }
+        });
+    }, 450);
+
+    return () => {
+      canceled = true;
+      window.clearTimeout(timer);
+    };
+  }, [city]);
 
   const handleSendOtp = async () => {
     const normalizedPhone = phone.replace(/\D/g, "").slice(-10);
@@ -68,21 +238,23 @@ const Register = () => {
   };
 
   const handleContinue = async () => {
-    if (!name.trim() || phone.length !== 10) return;
+    if (!name.trim() || !city.trim() || phone.length !== 10) return;
     setSubmitting(true);
     setError("");
     try {
       const res = await registerUser({
         name: name.trim(),
         phone,
-        city: "Bengaluru",
-        platform,
+        city: city.trim(),
+        platform: "Swiggy",
+        zone_area: zoneArea,
       });
       saveCurrentUser({
         name: name.trim(),
         phone,
-        city: "Bengaluru",
-        platform,
+        city: city.trim(),
+        zoneArea: zoneArea,
+        platform: "Swiggy",
         selectedPlan: "Standard Shield",
         backendUserId: res.user_id,
         zoneId,
@@ -238,13 +410,50 @@ const Register = () => {
                   className="h-14 rounded-xl text-base font-medium bg-secondary"
                 />
 
-                {/* City — locked to Bengaluru */}
+                {/* City input */}
                 <div>
                   <label className="text-sm font-semibold text-foreground mb-2 block">
                     <MapPin size={14} className="inline mr-1" /> City
                   </label>
-                  <div className="h-14 rounded-xl text-base font-medium bg-secondary border border-border/40 flex items-center px-4 text-foreground">
-                    Bengaluru
+                  <div className="relative">
+                    <Input
+                      placeholder="Enter your city"
+                      value={city}
+                      onChange={(e) => {
+                        setCity(e.target.value);
+                        setCityFocused(true);
+                      }}
+                      onFocus={() => setCityFocused(true)}
+                      onBlur={() => {
+                        cityBlurTimerRef.current = window.setTimeout(() => {
+                          setCityFocused(false);
+                        }, 120);
+                      }}
+                      className="h-14 rounded-xl text-base font-medium bg-secondary"
+                    />
+
+                    {placesReady && cityFocused && (cityLoading || citySuggestions.length > 0) && (
+                      <div className="absolute z-20 top-[calc(100%+6px)] left-0 right-0 bg-secondary border border-border/50 rounded-xl shadow-xl overflow-hidden">
+                        {cityLoading ? (
+                          <p className="px-4 py-3 text-sm text-muted-foreground">Finding cities...</p>
+                        ) : (
+                          citySuggestions.map((suggestion) => (
+                            <button
+                              key={suggestion.placeId}
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                setCity(suggestion.primaryText);
+                                setCityFocused(false);
+                              }}
+                              className="w-full text-left px-4 py-3 text-sm text-foreground hover:bg-foreground/5 transition-colors"
+                            >
+                              {suggestion.description}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -253,12 +462,18 @@ const Register = () => {
                   <label className="text-sm font-semibold text-foreground mb-3 block">
                     <MapPin size={14} className="inline mr-1" /> Delivery Zone
                   </label>
+                  {zonesLoading ? (
+                    <p className="text-xs text-muted-foreground mb-2">Refreshing zones for {city.trim()}...</p>
+                  ) : null}
                   <div className="grid grid-cols-1 gap-2">
-                    {ZONES.map((z) => (
+                    {displayedZones.map((z) => (
                       <button
                         key={z.id}
                         type="button"
-                        onClick={() => setZoneId(z.id)}
+                          onClick={() => {
+                            setZoneId(z.id);
+                            setZoneArea(z.area);
+                          }}
                         className={`px-4 py-3 rounded-xl text-sm font-semibold transition-all ${
                           zoneId === z.id
                             ? "bg-accent-orange/15 text-accent-orange border border-accent-orange/30"
@@ -271,26 +486,13 @@ const Register = () => {
                   </div>
                 </div>
 
-                {/* Platform toggle */}
+                {/* Platform (Swiggy only) */}
                 <div>
                   <label className="text-sm font-semibold text-foreground mb-3 block">
                     Delivery Platform
                   </label>
-                  <div className="flex gap-3">
-                    {(["Swiggy", "Zomato"] as const).map((p) => (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => setPlatform(p)}
-                        className={`flex-1 px-5 py-3 rounded-xl text-sm font-semibold transition-all ${
-                          platform === p
-                            ? "bg-accent-orange/15 text-accent-orange border border-accent-orange/30"
-                            : "bg-secondary border border-border/40 text-foreground"
-                        }`}
-                      >
-                        {p}
-                      </button>
-                    ))}
+                  <div className="px-5 py-3 rounded-xl text-sm font-semibold bg-accent-orange/15 text-accent-orange border border-accent-orange/30 text-center">
+                    Swiggy
                   </div>
                 </div>
               </div>

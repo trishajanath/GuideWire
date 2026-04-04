@@ -5,14 +5,9 @@ import MobileShell from "@/components/MobileShell";
 import BottomNav from "@/components/BottomNav";
 import { getCurrentUser } from "@/lib/session";
 import {
-  getWeatherRisk,
-  getZoneActivity,
-  getTriggerCheck,
   getDashboard,
-  ZONES,
-  type WeatherRisk,
-  type ZoneActivity,
-  type TriggerCheck,
+  getCityWeather,
+  type CityWeather,
 } from "@/lib/api";
 
 const Dashboard = () => {
@@ -20,15 +15,13 @@ const Dashboard = () => {
   const user = getCurrentUser();
   const firstName = user?.name?.split(" ")[0] ?? "there";
   const selectedPlan = user?.selectedPlan ?? "Standard Shield";
-  const zoneId = user?.zoneId ?? ZONES[0].id;
-  const zoneName = ZONES.find((z) => z.id === zoneId)?.area ?? "Koramangala";
+  const city = user?.city ?? "Bengaluru";
+  const zoneName = user?.zoneArea ?? city;
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
-  const [weather, setWeather] = useState<WeatherRisk | null>(null);
-  const [zone, setZone] = useState<ZoneActivity | null>(null);
-  const [trigger, setTrigger] = useState<TriggerCheck | null>(null);
+  const [weather, setWeather] = useState<CityWeather | null>(null);
   const [totalPayouts, setTotalPayouts] = useState(0);
   const [claimsCount, setClaimsCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -41,9 +34,7 @@ const Dashboard = () => {
       return;
     }
     const fetches: Promise<unknown>[] = [
-      getWeatherRisk(zoneId).then(setWeather),
-      getZoneActivity(zoneId).then(setZone),
-      getTriggerCheck(zoneId).then(setTrigger),
+      getCityWeather(city).then(setWeather),
     ];
     if (backendUserId != null) {
       fetches.push(
@@ -55,7 +46,7 @@ const Dashboard = () => {
     }
     Promise.allSettled(fetches).finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate, zoneId, backendUserId]);
+  }, [navigate, city, backendUserId]);
 
   const premiumMap: Record<string, number> = {
     "Basic Shield": 49,
@@ -76,8 +67,8 @@ const Dashboard = () => {
       : riskLabel === "Medium"
         ? "text-warning"
         : "text-accent-green";
-  const zoneStatus = zone?.status ?? "normal";
-  const triggerActive = trigger?.trigger ?? false;
+  const zoneStatus = (weather?.weather_risk_score ?? 0) > 60 ? "disruption" : "normal";
+  const triggerActive = (weather?.weather_risk_score ?? 0) > 60;
 
   return (
     <MobileShell>

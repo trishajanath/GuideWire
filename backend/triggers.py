@@ -1,6 +1,51 @@
 from __future__ import annotations
 
 
+def _trigger_metadata() -> list[dict[str, object]]:
+    return [
+        {
+            "trigger": "heavy_rainfall",
+            "category": "weather",
+            "threshold": ">30mm in 3 hours",
+            "data_sources": ["OpenWeather", "IMD"],
+            "severity_multiplier": 1.2,
+            "payout_activation": "Automatic",
+        },
+        {
+            "trigger": "extreme_heat",
+            "category": "weather",
+            "threshold": ">42C sustained",
+            "data_sources": ["OpenWeather", "IMD"],
+            "severity_multiplier": 1.15,
+            "payout_activation": "Automatic",
+        },
+        {
+            "trigger": "cyclone_alert",
+            "category": "weather",
+            "threshold": "IMD orange/red alert",
+            "data_sources": ["IMD warnings"],
+            "severity_multiplier": 1.5,
+            "payout_activation": "Automatic",
+        },
+        {
+            "trigger": "urban_flooding",
+            "category": "weather",
+            "threshold": "road flooding or severe standing water",
+            "data_sources": ["IMD warnings", "worker reports"],
+            "severity_multiplier": 1.4,
+            "payout_activation": "Automatic",
+        },
+        {
+            "trigger": "poor_visibility",
+            "category": "weather",
+            "threshold": "<100m visibility",
+            "data_sources": ["OpenWeather", "IMD", "visibility sensors"],
+            "severity_multiplier": 1.1,
+            "payout_activation": "Automatic",
+        },
+    ]
+
+
 def _build_response(trigger: str, breached: bool, value: float | int) -> dict:
     return {
         "trigger": trigger,
@@ -17,6 +62,27 @@ def check_rainfall_trigger(rainfall_mm_last_3_hours: float) -> dict:
 def check_temperature_trigger(temperature_celsius: float) -> dict:
     breached = temperature_celsius > 42
     return _build_response("temperature", breached, temperature_celsius)
+
+
+def check_cyclone_alert_trigger(imd_alert_level: str) -> dict:
+    breached = imd_alert_level.lower() in {"orange", "red"}
+    return _build_response("cyclone_alert", breached, imd_alert_level)
+
+
+def check_urban_flooding_trigger(
+    urban_flooding: bool,
+    rainfall_mm_last_3_hours: float,
+    visibility_meters: float | None,
+) -> dict:
+    breached = bool(urban_flooding)
+    if not breached and rainfall_mm_last_3_hours >= 60 and visibility_meters is not None and visibility_meters < 500:
+        breached = True
+    return _build_response("urban_flooding", breached, rainfall_mm_last_3_hours)
+
+
+def check_poor_visibility_trigger(visibility_meters: float | None) -> dict:
+    breached = visibility_meters is not None and visibility_meters < 100
+    return _build_response("poor_visibility", breached, visibility_meters if visibility_meters is not None else 0)
 
 
 def check_demand_drop_trigger(current_orders: int, average_orders: float) -> dict:
@@ -131,6 +197,9 @@ def evaluate_trigger_pipeline(
     *,
     rainfall_mm_last_3_hours: float,
     temperature_celsius: float,
+    visibility_meters: float | None = None,
+    urban_flooding: bool = False,
+    imd_alert_level: str = "none",
     current_orders: int,
     average_orders: float,
     orders_in_3_hours: int,
@@ -146,12 +215,18 @@ def evaluate_trigger_pipeline(
 ) -> dict:
     rainfall_trigger = check_rainfall_trigger(rainfall_mm_last_3_hours)
     temperature_trigger = check_temperature_trigger(temperature_celsius)
+    cyclone_trigger = check_cyclone_alert_trigger(imd_alert_level)
+    flooding_trigger = check_urban_flooding_trigger(urban_flooding, rainfall_mm_last_3_hours, visibility_meters)
+    visibility_trigger = check_poor_visibility_trigger(visibility_meters)
     demand_drop_trigger = check_demand_drop_trigger(current_orders, average_orders)
     pause_trigger = check_order_allocation_pause_trigger(orders_in_3_hours)
 
     trigger_candidates = [
         rainfall_trigger,
         temperature_trigger,
+        cyclone_trigger,
+        flooding_trigger,
+        visibility_trigger,
         demand_drop_trigger,
         pause_trigger,
     ]
@@ -170,13 +245,20 @@ def evaluate_trigger_pipeline(
             "fraud_risk": fraud["fraud_risk"],
             "payout": 0,
             "message": "No threshold breach detected",
+            "trigger_type": "none",
         }
 
     worker_active = worker_logged_in and active_hours > 0
     validation = evaluate_trigger(
         trigger=detected_trigger["trigger"],
         breached=True,
-        primary_source=bool(rainfall_trigger["breached"] or temperature_trigger["breached"]),
+        primary_source=bool(
+            rainfall_trigger["breached"]
+            or temperature_trigger["breached"]
+            or cyclone_trigger["breached"]
+            or flooding_trigger["breached"]
+            or visibility_trigger["breached"]
+        ),
         secondary_source=bool(demand_drop_trigger["breached"] or pause_trigger["breached"]),
         platform_impact=bool(demand_drop_trigger["breached"] or pause_trigger["breached"]),
         worker_active=worker_active,
@@ -189,6 +271,7 @@ def evaluate_trigger_pipeline(
             "fraud_risk": fraud["fraud_risk"],
             "payout": 0,
             "message": validation["reason"],
+            "trigger_type": detected_trigger["trigger"],
         }
 
     if not fraud["allow_payout"]:
@@ -198,6 +281,7 @@ def evaluate_trigger_pipeline(
             "fraud_risk": fraud["fraud_risk"],
             "payout": 0,
             "message": "Fraud risk too high, payout held for review",
+            "trigger_type": detected_trigger["trigger"],
         }
 
     lost_hours = max(0.0, assumed_shift_hours - active_hours)
@@ -216,6 +300,7 @@ def evaluate_trigger_pipeline(
             "fraud_risk": fraud["fraud_risk"],
             "payout": 0,
             "message": "Trigger confirmed, but no compensable lost hours were reported",
+            "trigger_type": detected_trigger["trigger"],
         }
 
     return {
@@ -224,4 +309,5 @@ def evaluate_trigger_pipeline(
         "fraud_risk": fraud["fraud_risk"],
         "payout": payout,
         "message": "Trigger confirmed and payout approved",
+        "trigger_type": detected_trigger["trigger"],
     }

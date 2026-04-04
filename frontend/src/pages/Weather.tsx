@@ -5,11 +5,10 @@ import MobileShell from "@/components/MobileShell";
 import BottomNav from "@/components/BottomNav";
 import { getCurrentUser } from "@/lib/session";
 import {
-  getWeatherRisk,
-  getLatestWeatherEvent,
-  ZONES,
-  type WeatherRisk,
-  type RawWeatherEvent,
+  getCityWeather,
+  getCityZones,
+  type CityWeather,
+  type CityZone,
 } from "@/lib/api";
 
 const riskColors: Record<string, string> = {
@@ -21,33 +20,34 @@ const riskColors: Record<string, string> = {
 const Weather = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
-  const zoneId = user?.zoneId ?? ZONES[0].id;
+  const city = user?.city ?? "Bengaluru";
+  const zoneName = user?.zoneArea ?? city;
 
-  const [event, setEvent] = useState<RawWeatherEvent | null>(null);
-  const [risk, setRisk] = useState<WeatherRisk | null>(null);
+  const [weather, setWeather] = useState<CityWeather | null>(null);
+  const [zones, setZones] = useState<CityZone[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     Promise.allSettled([
-      getLatestWeatherEvent(zoneId).then((d) => { if (!cancelled) setEvent(d); }),
-      getWeatherRisk(zoneId).then((d) => { if (!cancelled) setRisk(d); }),
+      getCityWeather(city).then((d) => { if (!cancelled) setWeather(d); }),
+      getCityZones(city).then((d) => { if (!cancelled) setZones(d.zones); }),
     ])
       .then((results) => {
         if (!cancelled && results.every((r) => r.status === "rejected")) setError("No weather data yet");
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [zoneId]);
+  }, [city]);
 
-  const temp = event?.temperature ?? 0;
-  const humidity = event?.humidity ?? 0;
-  const windSpeed = event?.wind_speed ?? 0;
-  const rainfall = event?.rainfall ?? 0;
-  const riskScore = risk?.weather_risk_score ?? 0;
-  const triggerProb = risk?.trigger_probability ?? 0;
-  const triggerType = risk?.trigger_type ?? "none";
+  const temp = weather?.temperature ?? 0;
+  const humidity = weather?.humidity ?? 0;
+  const windSpeed = weather?.wind_speed ?? 0;
+  const rainfall = weather?.rainfall ?? 0;
+  const riskScore = weather?.weather_risk_score ?? 0;
+  const triggerProb = weather?.trigger_probability ?? 0;
+  const triggerType = weather?.trigger_type ?? "none";
 
   const riskLevel = riskScore > 60 ? "high" : riskScore > 30 ? "medium" : "low";
 
@@ -63,22 +63,7 @@ const Weather = () => {
           ? "Hot & Sunny"
           : "Partly Cloudy";
 
-  /* All zones for the comparison table */
-  const [allZones, setAllZones] = useState<
-    { zone: (typeof ZONES)[number]; risk: WeatherRisk | null }[]
-  >([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all(
-      ZONES.map((z) =>
-        getWeatherRisk(z.id)
-          .then((r) => ({ zone: z, risk: r }))
-          .catch(() => ({ zone: z, risk: null })),
-      ),
-    ).then((d) => { if (!cancelled) setAllZones(d); });
-    return () => { cancelled = true; };
-  }, []);
+  const allZones = zones;
 
   return (
     <MobileShell>
@@ -107,7 +92,7 @@ const Weather = () => {
             {/* Current Weather — hero */}
             <div className="card-premium rounded-2xl p-6 mb-6 shadow-elevated">
               <p className="text-[11px] font-medium text-muted-foreground/60 tracking-wide mb-3">
-                Current — {ZONES.find((z) => z.id === zoneId)?.area}
+                Current — {zoneName}
               </p>
               <div className="flex items-end justify-between mb-1">
                 <p className="text-5xl font-extrabold text-foreground tracking-tighter leading-none">{Math.round(temp)}°</p>
@@ -168,12 +153,12 @@ const Weather = () => {
               <div className="card-premium rounded-2xl p-5 shadow-card">
                 <h3 className="text-sm font-bold text-foreground mb-4">Zone Safety</h3>
                 <div className="space-y-3">
-                  {allZones.map(({ zone, risk: zr }) => {
-                    const score = zr?.weather_risk_score ?? 0;
+                  {allZones.map((zone) => {
+                    const score = riskScore;
                     const level = score > 60 ? "High" : score > 30 ? "Medium" : "Low";
                     const levelColor = score > 60 ? "text-destructive" : score > 30 ? "text-warning" : "text-accent-green";
                     const barColor = score > 60 ? "bg-destructive" : score > 30 ? "bg-warning" : "bg-accent-green";
-                    const isCurrentZone = zone.id === zoneId;
+                    const isCurrentZone = zone.area === zoneName;
                     return (
                       <div key={zone.id} className="flex items-center gap-3">
                         <span className={`w-24 text-xs truncate ${isCurrentZone ? "font-bold text-foreground" : "font-medium text-muted-foreground"}`}>

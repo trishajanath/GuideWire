@@ -82,9 +82,9 @@ except ImportError:
     from plan_recommendation import recommend_plan
 
 try:
-    from .assistant import generate_assistant_reply
+    from .assistant import generate_assistant_reply, generate_city_zone_suggestions
 except ImportError:
-    from assistant import generate_assistant_reply
+    from assistant import generate_assistant_reply, generate_city_zone_suggestions
 
 try:
     from .models import (
@@ -316,6 +316,48 @@ def _build_weather_event(zone_id: str, payload: dict) -> RawWeatherEvent:
     )
 
 
+async def fetch_openweather_payload(city_query: str) -> dict | None:
+    params = {
+        "q": city_query,
+        "appid": OPENWEATHER_API_KEY,
+        "units": "metric",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(OPENWEATHER_URL, params=params)
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError:
+        return None
+
+
+def build_city_weather_response(city_query: str, payload: dict) -> dict:
+    event = _build_weather_event(city_query, payload)
+    risk = calculate_weather_risk(
+        {
+            "rainfall": event.rainfall,
+            "temperature": event.temperature,
+            "humidity": event.humidity,
+            "wind_speed": event.wind_speed,
+        }
+    )
+    weather = payload.get("weather") or []
+    condition = weather[0].get("main", "Unknown") if weather else "Unknown"
+
+    return {
+        "city": city_query,
+        "condition": condition,
+        "temperature": event.temperature,
+        "humidity": event.humidity,
+        "wind_speed": event.wind_speed,
+        "rainfall": event.rainfall,
+        "weather_risk_score": risk["weather_risk_score"],
+        "trigger_probability": risk["trigger_probability"],
+        "trigger_type": risk["trigger_type"],
+    }
+
+
 async def fetch_weather_for_zone(zone_id: str, city_query: str) -> RawWeatherEvent | None:
     params = {
         "q": city_query,
@@ -365,6 +407,7 @@ class RegistrationRequest(BaseModel):
     phone: str = Field(..., min_length=6)
     city: str = Field(..., min_length=1)
     platform: Literal["Swiggy", "Zomato"]
+    zone_area: str | None = None
 
 
 class OTPSendRequest(BaseModel):
@@ -396,6 +439,9 @@ class AutoClaimRequest(BaseModel):
 class TriggerWeatherInput(BaseModel):
     rainfall: float = Field(..., ge=0)
     temperature: float = Field(...)
+    visibility_meters: float | None = Field(default=None, ge=0)
+    urban_flooding: bool = False
+    imd_alert_level: Literal["none", "yellow", "orange", "red"] = "none"
 
 
 class TriggerPlatformInput(BaseModel):
@@ -421,6 +467,23 @@ class TriggerEvaluateRequest(BaseModel):
     platform: TriggerPlatformInput
     worker_activity: TriggerWorkerActivityInput
     fraud_signals: TriggerFraudSignalsInput = Field(default_factory=TriggerFraudSignalsInput)
+
+
+class CityZonesResponse(BaseModel):
+    city: str
+    zones: list[dict[str, str]]
+
+
+class CityWeatherResponse(BaseModel):
+    city: str
+    condition: str
+    temperature: float
+    humidity: float
+    wind_speed: float
+    rainfall: float
+    weather_risk_score: int
+    trigger_probability: float
+    trigger_type: str
 
 
 def update_last_trigger(user: dict) -> dict:
@@ -468,6 +531,13 @@ def check_weather_trigger(city: str) -> dict:
         "severity_level": 1 if trigger_status else 0,
         "rainfall_mm": rainfall,
     }
+
+
+def _normalize_city_display(city: str) -> str:
+    normalized = city.strip()
+    if not normalized:
+        return "Bengaluru"
+    return " ".join(word.capitalize() for word in normalized.split())
 
 
 def calculate_fraud_score(user_id: int) -> float:
@@ -567,6 +637,7 @@ def register_user(payload: RegistrationRequest):
         "phone": payload.phone,
         "city": payload.city,
         "platform": payload.platform,
+        "zone_area": payload.zone_area,
     }
     users[user_id] = user
     return {"user_id": user_id}
@@ -688,6 +759,9 @@ def evaluate_trigger_endpoint(payload: TriggerEvaluateRequest):
     return evaluate_trigger_pipeline(
         rainfall_mm_last_3_hours=payload.weather.rainfall,
         temperature_celsius=payload.weather.temperature,
+        visibility_meters=payload.weather.visibility_meters,
+        urban_flooding=payload.weather.urban_flooding,
+        imd_alert_level=payload.weather.imd_alert_level,
         current_orders=payload.platform.current_orders,
         average_orders=payload.platform.average_orders,
         orders_in_3_hours=payload.platform.orders_last_3_hours,
@@ -813,6 +887,37 @@ def assistant_chat_endpoint(payload: AssistantChatRequest):
         language=payload.language,
     )
     return {"reply": reply}
+
+
+@app.get("/api/city-zones", response_model=CityZonesResponse)
+def city_zones(city: str):
+    normalized_city = _normalize_city_display(city)
+    max_zones = len(ZONE_CONFIG)
+    zone_areas = generate_city_zone_suggestions(city=normalized_city, limit=max_zones)
+
+    zones = [
+        {
+            "id": f"{normalized_city.lower().replace(' ', '_')}_{area.lower().replace(' ', '_').replace('.', '').replace(',', '')}",
+            "city": normalized_city,
+            "area": area,
+        }
+        for index, area in enumerate(zone_areas)
+    ]
+
+    return {
+        "city": normalized_city,
+        "zones": zones,
+    }
+
+
+@app.get("/api/city/weather", response_model=CityWeatherResponse)
+async def city_weather(city: str):
+    normalized_city = _normalize_city_display(city)
+    payload = await fetch_openweather_payload(normalized_city)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="No weather data found for city")
+
+    return build_city_weather_response(normalized_city, payload)
 
 
 @app.get("/api/premium-quote")
