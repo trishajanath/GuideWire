@@ -1,6 +1,7 @@
 import os
 import logging
 import secrets
+import random
 import re
 import hashlib
 import math
@@ -599,6 +600,15 @@ class ClaimEvaluateRequest(BaseModel):
         ]
     ] = Field(default_factory=list)
     simulate_vpn: bool = False
+
+
+class AutoTriggerSimulationRequest(BaseModel):
+    worker_id: int = Field(..., ge=1)
+    city: str = Field(..., min_length=1)
+    zone_id: str | None = None
+    hours_lost: float = Field(default=3.0, gt=0)
+    app_active: bool = True
+    seed: int | None = None
 
 
 class TriggerEligibilityResponse(BaseModel):
@@ -1244,6 +1254,57 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
     )
 
 
+@app.post("/api/claims/simulate-automatic")
+async def simulate_automatic_claim(payload: AutoTriggerSimulationRequest):
+    city = _normalize_city_display(payload.city)
+    zone_id = (payload.zone_id or _default_zone_id_for_city(city)).strip().lower()
+    seed = int(payload.seed) if payload.seed is not None else secrets.randbelow(1_000_000_000)
+    rng = random.Random(seed)
+
+    weather = await _get_openweather_metrics(city)
+    demand = _mock_demand_metrics(zone_id)
+    imd_alert = _get_latest_alert_for_context(zone_id) or _get_latest_alert_for_context(city)
+    imd_alert_level = str(imd_alert.get("alert_level", "none")) if imd_alert else "none"
+
+    selected_scenarios = _choose_automatic_scenarios(
+        zone_id=zone_id,
+        weather=weather,
+        demand=demand,
+        imd_alert_level=imd_alert_level,
+        rng=rng,
+    )
+
+    zone_center = _infer_claim_zone_center(zone_id, city) or CLAIM_ZONE_CENTERS.get("bengaluru")
+    if zone_center is None:
+        zone_center = (12.9716, 77.5946)
+
+    evaluate_payload = ClaimEvaluateRequest(
+        worker_id=payload.worker_id,
+        zone_id=zone_id,
+        city=city,
+        gps_lat=zone_center[0],
+        gps_lon=zone_center[1],
+        hours_lost=payload.hours_lost,
+        app_active=payload.app_active,
+        demo_mode=bool(selected_scenarios),
+        demo_scenario=selected_scenarios[0] if selected_scenarios else "none",
+        demo_scenarios=selected_scenarios,
+        simulate_vpn=False,
+    )
+
+    result = await evaluate_claim(evaluate_payload)
+
+    return {
+        "mode": "automatic",
+        "seed": seed,
+        "selected_scenarios": selected_scenarios,
+        "city_weather_baseline": weather,
+        "platform_baseline": demand,
+        "imd_alert_level": imd_alert_level,
+        "claim_result": result.model_dump(),
+    }
+
+
 def _gemini_claim_verdict(
     *,
     claim_status: str,
@@ -1362,6 +1423,94 @@ def _format_fraud_decision(score: float) -> str:
     if score <= 0.7:
         return "approve-with-flag"
     return "hold-for-review"
+
+
+def _default_zone_id_for_city(city: str) -> str:
+    normalized = city.strip().lower().replace(",", " ")
+    parts = [part for part in normalized.split() if part]
+    if not parts:
+        return "bengaluru"
+    return "_".join(parts)
+
+
+def _choose_automatic_scenarios(
+    *,
+    zone_id: str,
+    weather: dict[str, float | bool],
+    demand: dict[str, float],
+    imd_alert_level: str,
+    rng: random.Random,
+) -> list[str]:
+    scenarios: list[str] = []
+
+    rainfall = float(weather.get("rainfall_mm_per_hr", 0.0))
+    temperature = float(weather.get("temperature_c", 0.0))
+    visibility = float(weather.get("visibility_meters", 2000.0))
+    demand_drop = float(demand.get("drop_pct", 0.0))
+
+    if rainfall >= 20.0 and rng.random() < min(0.9, rainfall / 70.0):
+        scenarios.append("heavy_rain")
+
+    if temperature >= 39.0 and rng.random() < min(0.85, max(0.05, (temperature - 35.0) / 12.0)):
+        scenarios.append("extreme_heat")
+
+    if visibility < 180.0 and rng.random() < 0.7:
+        scenarios.append("poor_visibility")
+
+    if rainfall >= 28.0 and rng.random() < 0.45:
+        scenarios.append("urban_flooding")
+
+    if imd_alert_level in {"orange", "red"} and rng.random() < 0.85:
+        scenarios.append("cyclone_alert")
+
+    if demand_drop >= 45.0:
+        if rng.random() < 0.85:
+            scenarios.append("demand_collapse")
+    elif rng.random() < 0.12:
+        scenarios.append("demand_collapse")
+
+    if rng.random() < 0.16:
+        scenarios.append("order_pause")
+
+    if rng.random() < 0.18:
+        scenarios.append(rng.choice(["curfew", "public_health_emergency", "civil_disturbance", "infrastructure_failure"]))
+
+    zone_shutdown_baseline = _mock_zone_shutdown_active(zone_id)
+    if zone_shutdown_baseline:
+        if rng.random() < 0.7:
+            scenarios.append("zone_shutdown")
+    elif rng.random() < 0.08:
+        scenarios.append("zone_shutdown")
+
+    platform_outage_baseline = _mock_platform_outage_degraded(zone_id)
+    if platform_outage_baseline:
+        if rng.random() < 0.65:
+            scenarios.append("platform_outage")
+    elif rng.random() < 0.1:
+        scenarios.append("platform_outage")
+
+    if not scenarios:
+        scenarios.append(
+            rng.choice(
+                [
+                    "heavy_rain",
+                    "extreme_heat",
+                    "cyclone_alert",
+                    "urban_flooding",
+                    "poor_visibility",
+                    "demand_collapse",
+                    "order_pause",
+                    "zone_shutdown",
+                    "platform_outage",
+                    "curfew",
+                    "public_health_emergency",
+                    "civil_disturbance",
+                    "infrastructure_failure",
+                ]
+            )
+        )
+
+    return list(dict.fromkeys(scenarios))
 
 
 class PolicyUpgradeRequest(BaseModel):
@@ -2323,7 +2472,13 @@ def create_admin_imd_alert(payload: IMDAlertRequest):
 def get_imd_alert_by_zone(zone: str):
     latest = _get_latest_alert_for_context(zone)
     if latest is None:
-        raise HTTPException(status_code=404, detail="No IMD alert found for zone")
+        return {
+            "zone": zone.strip().lower(),
+            "alert_level": "green",
+            "event": "rain",
+            "source": "rss",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
 
     return {
         "zone": latest["zone"],

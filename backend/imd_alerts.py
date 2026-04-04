@@ -17,6 +17,7 @@ EVENT_TYPES = {"cyclone", "rain", "heatwave"}
 RSS_ZONE_KEYWORDS: dict[str, list[str]] = {
     "chennai": ["chennai", "tamil nadu"],
     "bengaluru": ["bengaluru", "bangalore", "karnataka"],
+    "coimbatore": ["coimbatore", "tamil nadu"],
     "mumbai": ["mumbai", "maharashtra"],
     "kochi": ["kochi", "kerala"],
     "kolkata": ["kolkata", "west bengal"],

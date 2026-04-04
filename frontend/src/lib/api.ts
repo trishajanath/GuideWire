@@ -444,6 +444,40 @@ export interface ClaimEvaluateResult {
   ai_verdict?: string | null;
 }
 
+export interface AutomaticSimulationResult {
+  mode: "automatic";
+  seed: number;
+  selected_scenarios: Array<
+    | "heavy_rain"
+    | "extreme_heat"
+    | "cyclone_alert"
+    | "urban_flooding"
+    | "poor_visibility"
+    | "demand_collapse"
+    | "order_pause"
+    | "zone_shutdown"
+    | "zone_restriction"
+    | "platform_outage"
+    | "curfew"
+    | "public_health_emergency"
+    | "civil_disturbance"
+    | "infrastructure_failure"
+  >;
+  city_weather_baseline: {
+    rainfall_mm_per_hr: number;
+    temperature_c: number;
+    visibility_meters: number;
+    urban_flooding: boolean;
+  };
+  platform_baseline: {
+    current_index: number;
+    historical_avg: number;
+    drop_pct: number;
+  };
+  imd_alert_level: "none" | "yellow" | "orange" | "red";
+  claim_result: ClaimEvaluateResult;
+}
+
 export const evaluateClaimEngine = (data: {
   worker_id: number;
   zone_id: string;
@@ -488,6 +522,19 @@ export const evaluateClaimEngine = (data: {
   simulate_vpn?: boolean;
 }) =>
   request<ClaimEvaluateResult>("/api/claims/evaluate", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const simulateAutomaticClaims = (data: {
+  worker_id: number;
+  city: string;
+  zone_id?: string | null;
+  hours_lost?: number;
+  app_active?: boolean;
+  seed?: number | null;
+}) =>
+  request<AutomaticSimulationResult>("/api/claims/simulate-automatic", {
     method: "POST",
     body: JSON.stringify(data),
   });

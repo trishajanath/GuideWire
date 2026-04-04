@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, IndianRupee, CloudRain, ArrowLeft, Loader2, CheckCircle2, Zap, Shield } from "lucide-react";
+import { AlertTriangle, IndianRupee, CloudRain, ArrowLeft, Loader2, CheckCircle2, Zap, Shield, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -53,6 +53,197 @@ const getClaimGps = (zoneId: string, city: string) => {
   return CITY_CENTER[city.trim().toLowerCase()] ?? CITY_CENTER.bengaluru;
 };
 
+type MockScenario =
+  | "heavy_rain"
+  | "extreme_heat"
+  | "cyclone_alert"
+  | "urban_flooding"
+  | "poor_visibility"
+  | "demand_collapse"
+  | "order_pause"
+  | "zone_shutdown"
+  | "platform_outage"
+  | "curfew"
+  | "public_health_emergency"
+  | "civil_disturbance"
+  | "infrastructure_failure";
+
+const MOCK_WEATHER_SCENARIOS: MockScenario[] = [
+  "heavy_rain",
+  "extreme_heat",
+  "cyclone_alert",
+  "urban_flooding",
+  "poor_visibility",
+];
+
+const MOCK_PLATFORM_SCENARIOS: MockScenario[] = [
+  "demand_collapse",
+  "order_pause",
+  "zone_shutdown",
+  "platform_outage",
+];
+
+const MOCK_EXTERNAL_SCENARIOS: MockScenario[] = [
+  "curfew",
+  "public_health_emergency",
+  "civil_disturbance",
+  "infrastructure_failure",
+];
+
+const mockScenarioMeta: Record<MockScenario, { category: "weather" | "platform" | "external"; source: "openweather" | "mock"; severity: number; threshold: number }> = {
+  heavy_rain: { category: "weather", source: "openweather", severity: 1.25, threshold: 30 },
+  extreme_heat: { category: "weather", source: "openweather", severity: 1.15, threshold: 42 },
+  cyclone_alert: { category: "weather", source: "mock", severity: 1.45, threshold: 1 },
+  urban_flooding: { category: "weather", source: "mock", severity: 1.35, threshold: 1 },
+  poor_visibility: { category: "weather", source: "mock", severity: 1.1, threshold: 100 },
+  demand_collapse: { category: "platform", source: "mock", severity: 1.2, threshold: 40 },
+  order_pause: { category: "platform", source: "mock", severity: 1.1, threshold: 2 },
+  zone_shutdown: { category: "platform", source: "mock", severity: 1.3, threshold: 1 },
+  platform_outage: { category: "platform", source: "mock", severity: 1.25, threshold: 1 },
+  curfew: { category: "external", source: "mock", severity: 1.35, threshold: 1 },
+  public_health_emergency: { category: "external", source: "mock", severity: 1.35, threshold: 1 },
+  civil_disturbance: { category: "external", source: "mock", severity: 1.35, threshold: 1 },
+  infrastructure_failure: { category: "external", source: "mock", severity: 1.35, threshold: 1 },
+};
+
+const makeRandomSeed = () => crypto.getRandomValues(new Uint32Array(1))[0];
+
+const pickOne = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)];
+
+const pickManyUnique = <T,>(items: T[], count: number) => {
+  const shuffled = [...items].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, Math.max(1, Math.min(count, shuffled.length)));
+};
+
+const buildMockClaimResult = (params: {
+  workerId: number;
+  zoneId: string;
+  city: string;
+  scenarios: MockScenario[];
+  hoursLost: number;
+}): ClaimEvaluateResult => {
+  const activeScenarios = params.scenarios.length > 0 ? params.scenarios : [pickOne([...MOCK_WEATHER_SCENARIOS, ...MOCK_PLATFORM_SCENARIOS, ...MOCK_EXTERNAL_SCENARIOS])];
+  const highestSeverity = Math.max(...activeScenarios.map((scenario) => mockScenarioMeta[scenario].severity));
+  const firedScenario = activeScenarios[0];
+  const basePayout = Math.round(params.hoursLost * 100 * highestSeverity);
+  const payoutAmount = Math.min(basePayout, 800);
+
+  return {
+    worker_id: params.workerId,
+    zone_id: params.zoneId,
+    city: params.city,
+    claim_status: highestSeverity < 1.3 ? "auto-approve" : highestSeverity < 1.5 ? "approve-with-flag" : "hold-for-review",
+    fraud_score: Number(Math.min(0.92, 0.18 + (activeScenarios.length - 1) * 0.14 + (highestSeverity - 1) * 0.22).toFixed(3)),
+    payout_amount: payoutAmount,
+    trigger_list: activeScenarios.map((scenario) => {
+      const meta = mockScenarioMeta[scenario];
+      const fired = scenario === firedScenario;
+      const value =
+        scenario === "heavy_rain"
+          ? Number((28 + Math.random() * 34).toFixed(1))
+          : scenario === "extreme_heat"
+            ? Number((42 + Math.random() * 7).toFixed(1))
+            : scenario === "poor_visibility"
+              ? Number((60 + Math.random() * 70).toFixed(0))
+              : scenario === "demand_collapse"
+                ? Number((42 + Math.random() * 35).toFixed(1))
+                : scenario === "order_pause"
+                  ? Number((1 + Math.random() * 2).toFixed(0))
+                  : 1;
+
+      return {
+        name: scenario,
+        category: meta.category,
+        source: meta.source,
+        fired,
+        status: fired ? "fired" : "not-fired",
+        value,
+        threshold: meta.threshold,
+        severity_multiplier: meta.severity,
+        eligibility: { policy_active: true, premium_paid: true, gps_in_zone: true },
+        fraud: fired
+          ? {
+              score: Number(Math.min(0.9, 0.12 + Math.random() * 0.45).toFixed(3)),
+              decision: highestSeverity < 1.3 ? "auto-approve" : highestSeverity < 1.5 ? "approve-with-flag" : "hold-for-review",
+              breakdown: [
+                { label: "GPS in registered zone", weight: 0.22, value: 0, contribution: 0 },
+                { label: "App active during event", weight: 0.18, value: 0, contribution: 0 },
+                { label: "Zone worker ratio", weight: 0.2, value: 0.5, contribution: 0.1 },
+                { label: "No duplicate claim", weight: 0.12, value: 0, contribution: 0 },
+                { label: "Claim frequency vs zone average", weight: 0.12, value: 0.1, contribution: 0.012 },
+                { label: "VPN / Proxy detection", weight: 0.16, value: 0, contribution: 0 },
+              ],
+            }
+          : undefined,
+        payout: fired
+          ? {
+              hours_lost: params.hoursLost,
+              hourly_rate: 100,
+              severity_multiplier: meta.severity,
+              daily_cap: 800,
+              raw_amount: Number((params.hoursLost * 100 * meta.severity).toFixed(2)),
+              final_amount: payoutAmount,
+              formula: `${params.hoursLost}h × ₹100 × ${meta.severity} = ₹${payoutAmount}`,
+            }
+          : undefined,
+      };
+    }),
+    demo_scenario_applied: firedScenario,
+    explanation: `Random mock scenario generated for ${activeScenarios.map((scenario) => scenario.replace(/_/g, " ")).join(", ")}.`,
+    ai_verdict: null,
+  };
+};
+
+const buildMockAlertState = (params: { zoneId: string; city: string; zoneName: string; hoursLost: number; workerId?: number }) => {
+  const seed = makeRandomSeed();
+  const modeRoll = Math.random();
+  const bucket = modeRoll < 0.45 ? "weather" : modeRoll < 0.8 ? "platform" : "external";
+  const sourceList = bucket === "weather" ? MOCK_WEATHER_SCENARIOS : bucket === "platform" ? MOCK_PLATFORM_SCENARIOS : MOCK_EXTERNAL_SCENARIOS;
+  const scenarios = pickManyUnique(sourceList, Math.floor(Math.random() * 3) + 1);
+  const claimResult = buildMockClaimResult({
+    workerId: params.workerId ?? 1,
+    zoneId: params.zoneId,
+    city: params.city,
+    scenarios,
+    hoursLost: params.hoursLost,
+  });
+  const firstFired = claimResult.trigger_list.find((item) => item.fired) ?? claimResult.trigger_list[0];
+  const weatherScenario = claimResult.trigger_list.find((item) => item.category === "weather" && item.fired);
+
+  const trigger = {
+    trigger: true,
+    type: firstFired.name,
+    severity: firstFired.severity_multiplier,
+  };
+
+  const risk = {
+    zone: params.zoneId,
+    weather_risk_score: Math.min(100, Math.round(35 + Math.random() * 55 + (bucket === "weather" ? 10 : 0))),
+    trigger_probability: Number((0.35 + Math.random() * 0.55).toFixed(2)),
+    trigger_type: weatherScenario?.name ?? firstFired.name,
+  };
+
+  const imdAlert: IMDAlert | null = bucket === "external"
+    ? {
+        zone: params.zoneId,
+        alert_level: Math.random() < 0.5 ? "orange" : "red",
+        event: pickOne(["cyclone", "rain", "heatwave"]),
+        source: "admin",
+        timestamp: new Date().toISOString(),
+      }
+    : bucket === "weather" && Math.random() < 0.7
+      ? {
+          zone: params.zoneId,
+          alert_level: pickOne(["yellow", "orange", "red"]),
+          event: pickOne(["cyclone", "rain", "heatwave"]),
+          source: "rss",
+          timestamp: new Date().toISOString(),
+        }
+      : null;
+
+  return { seed, trigger, risk, imdAlert, claimResult };
+};
+
 const TriggerAlert = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
@@ -69,6 +260,8 @@ const TriggerAlert = () => {
   const [claiming, setClaiming] = useState(false);
   const [autoClaimed, setAutoClaimed] = useState(false);
   const [showFraudDetails, setShowFraudDetails] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generatedSeed, setGeneratedSeed] = useState<number | null>(null);
 
   const selectedPlan = user?.selectedPlan;
   const userId = user?.backendUserId;
@@ -135,6 +328,33 @@ const TriggerAlert = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoneId, userId]);
 
+  const handleGenerateSituations = async () => {
+    if (!userId) return;
+    setGenerating(true);
+    setAutoClaimed(true);
+    setError("");
+    try {
+      const simulation = buildMockAlertState({
+        zoneId,
+        city,
+        zoneName,
+        hoursLost: 2,
+        workerId: userId,
+      });
+
+      setGeneratedSeed(simulation.seed);
+      setClaimResult(simulation.claimResult);
+      setTrigger(simulation.trigger);
+      setRisk(simulation.risk);
+      setImdAlert(simulation.imdAlert);
+      setClaiming(false);
+    } catch (err: any) {
+      setError(err?.message ?? "Could not generate situations");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const handleManualClaim = async () => {
     if (!userId) return;
     setClaiming(true);
@@ -178,14 +398,24 @@ const TriggerAlert = () => {
         <div className="w-full min-h-screen md:min-h-0 md:h-full bg-background overflow-y-auto relative">
       <div className="md:flex-1 md:overflow-y-auto px-4 pt-10 pb-24">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <button
-            onClick={() => navigate(-1)}
-            className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center"
+        <div className="flex items-start justify-between gap-3 mb-6">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate(-1)}
+              className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center"
+            >
+              <ArrowLeft size={18} className="text-foreground" strokeWidth={1.5} />
+            </button>
+            <h1 className="text-lg font-extrabold text-foreground tracking-tight">Alerts</h1>
+          </div>
+          <Button
+            onClick={handleGenerateSituations}
+            disabled={generating || claiming}
+            className="h-10 rounded-full px-4 text-xs font-bold bg-foreground text-background hover:bg-foreground/90"
           >
-            <ArrowLeft size={18} className="text-foreground" strokeWidth={1.5} />
-          </button>
-          <h1 className="text-lg font-extrabold text-foreground tracking-tight">Alerts</h1>
+            {generating ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Sparkles size={14} className="mr-2" />}
+            Generate Situations
+          </Button>
         </div>
 
         {loading ? (
@@ -199,6 +429,9 @@ const TriggerAlert = () => {
               <CheckCircle2 size={32} className="text-accent-green mx-auto mb-3" strokeWidth={1.5} />
               <h3 className="text-base font-extrabold text-foreground mb-1">All Clear</h3>
               <p className="text-sm text-muted-foreground">No active triggers for {zoneName}</p>
+              {generatedSeed !== null && (
+                <p className="mt-2 text-[11px] text-muted-foreground/60">Generated mock seed #{generatedSeed}</p>
+              )}
             </div>
           </>
         ) : (
@@ -218,6 +451,15 @@ const TriggerAlert = () => {
                 </div>
                 <CloudRain size={24} className="text-muted-foreground/40" strokeWidth={1.5} />
               </div>
+
+              {generatedSeed !== null && (
+                <div className="mb-4 rounded-xl border border-border/40 bg-secondary/30 px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">Mock situation generated from seed #{generatedSeed}</p>
+                  <p className="text-[11px] text-muted-foreground/70 mt-0.5">
+                    This is randomized UI data for weather, platform, or external-event triggers.
+                  </p>
+                </div>
+              )}
 
               {/* Flat rows */}
               <div className="space-y-2.5">
@@ -283,7 +525,7 @@ const TriggerAlert = () => {
             ) : (
               <div className="card-premium rounded-2xl p-4 mb-5 text-center">
                 <p className="text-xs font-medium text-muted-foreground">
-                  Payout will be credited automatically
+                  {generatedSeed !== null ? "Mock trigger generated. Payout will be shown automatically." : "Payout will be credited automatically"}
                 </p>
               </div>
             )}
