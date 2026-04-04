@@ -95,7 +95,7 @@ const Dashboard = () => {
 
   return (
     <MobileShell>
-      <div className={`px-4 pt-10 pb-24 ${rainActive ? "rain-overlay" : ""}`}>
+      <div className={`md:flex-1 md:overflow-y-auto px-4 pt-10 pb-24 ${rainActive ? "rain-overlay" : ""}`}>
         {/* Stale data indicator */}
         {isStale && (
           <div className="mb-3">

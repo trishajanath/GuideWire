@@ -251,7 +251,7 @@ const Policy = () => {
       const policyStart = policy.start_date ? new Date(policy.start_date) : new Date();
       const baseWeeklyPremium = tierFeatures[policy.tier].weeklyPremium;
       const paidClaimsTotal = claims.reduce(
-        (sum, claim) => sum + (claim.status.toLowerCase() === "paid" ? (claim.payout_amount ?? 0) : 0),
+        (sum, claim) => sum + (["paid", "approved", "auto-approve"].includes(claim.status.toLowerCase()) ? (claim.payout_amount ?? 0) : 0),
         0,
       );
       const weeksOnPolicy = Math.max(1, Math.floor((Date.now() - policyStart.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1);
@@ -317,8 +317,9 @@ const Policy = () => {
   }, [premiumResult, tierDetails.weeklyPremium, zoneRiskScore, weeksSinceStart]);
 
   const payoutsStats = useMemo(() => {
+    const isPaid = (s: string) => { const l = s.toLowerCase(); return l === "paid" || l === "approved" || l === "auto-approve"; };
     const totalPaid = claims
-      .filter((c) => c.status.toLowerCase() === "paid")
+      .filter((c) => isPaid(c.status))
       .reduce((sum, c) => sum + (c.payout_amount ?? 0), 0);
     const autoClaims = claims.length;
     const totalPremiumPaid = weeksSinceStart * premiumBreakdown.finalAmount;
@@ -420,7 +421,7 @@ const Policy = () => {
   if (loading) {
     return (
       <MobileShell>
-        <div className="px-4 pt-10 pb-24 flex items-center justify-center min-h-[60vh]">
+        <div className="md:flex-1 md:overflow-y-auto px-4 pt-10 pb-24 flex items-center justify-center min-h-[60vh]">
           <Loader2 className="animate-spin text-muted-foreground" size={32} />
         </div>
         <BottomNav active="Profile" />
@@ -430,7 +431,7 @@ const Policy = () => {
 
   return (
     <MobileShell>
-      <div className="px-4 pt-10 pb-28">
+      <div className="md:flex-1 md:overflow-y-auto px-4 pt-10 pb-28">
         <div className="flex items-center gap-3 mb-5">
           <button onClick={() => navigate(-1)} className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center">
             <ArrowLeft size={18} className="text-foreground" strokeWidth={1.5} />
@@ -549,53 +550,6 @@ const Policy = () => {
             >
               Upgrade Plan
             </button>
-
-            <div className="rounded-2xl border border-border/60 p-4 mt-5">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <p className="text-sm font-bold text-foreground">Model Info</p>
-                  <p className="text-[11px] text-muted-foreground">LinearRegression trained on 500 synthetic rows</p>
-                </div>
-                <span className="text-xs font-semibold text-foreground">R² {premiumModelInfo ? premiumModelInfo.r2.toFixed(3) : "-"}</span>
-              </div>
-              {premiumModelInfo ? (
-                <div className="space-y-2 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Intercept</span>
-                    <span className="font-semibold text-foreground">{premiumModelInfo.intercept.toFixed(2)}</span>
-                  </div>
-                  <div className="space-y-1">
-                    {coefficientRows.slice(0, 4).map((row) => (
-                      <div key={row.feature} className="flex items-center justify-between">
-                        <span className="text-muted-foreground capitalize">{row.feature.replace(/_/g, " ")}</span>
-                        <span className="font-semibold text-foreground">{row.value.toFixed(2)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">Model metadata loading...</p>
-              )}
-            </div>
-
-            {premiumZones.length > 0 && (
-              <div className="rounded-2xl border border-border/60 p-4 mt-5">
-                <p className="text-sm font-bold text-foreground mb-3">Zone Flood Scores</p>
-                <div className="space-y-2">
-                  {premiumZones.map((zone) => (
-                    <div key={zone.zone} className="rounded-xl bg-secondary/40 p-3">
-                      <div className="flex items-center justify-between gap-2 text-xs mb-2">
-                        <span className="font-semibold text-foreground">{zone.zone}</span>
-                        <span className="text-muted-foreground">Flood {Math.round(zone.flood_score * 100)}/100</span>
-                      </div>
-                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                        <div className="h-full rounded-full bg-warning" style={{ width: `${Math.max(4, zone.flood_score * 100)}%` }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </>
         )}
 
@@ -627,7 +581,7 @@ const Policy = () => {
                   const formula = `${claim.hours_lost}h x ₹${claim.hourly_rate} x ${claim.multiplier} = ₹${Math.round(
                     claim.hours_lost * claim.hourly_rate * claim.multiplier,
                   )}`;
-                  const paid = claim.status.toLowerCase() === "paid";
+                  const paid = ["paid", "approved", "auto-approve"].includes(claim.status.toLowerCase());
                   return (
                     <div key={claim.id} className="rounded-xl bg-secondary/40 p-3">
                       <div className="flex items-center justify-between gap-2">

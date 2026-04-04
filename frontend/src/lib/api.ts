@@ -440,6 +440,7 @@ export interface ClaimEvaluateResult {
   trigger_list: ClaimEvaluateTrigger[];
   demo_scenario_applied?: string | null;
   explanation: string;
+  ai_verdict?: string | null;
 }
 
 export const evaluateClaimEngine = (data: {
@@ -452,6 +453,7 @@ export const evaluateClaimEngine = (data: {
   app_active?: boolean;
   demo_mode?: boolean;
   demo_scenario?: "none" | "heavy_rain" | "extreme_heat" | "demand_collapse" | "zone_shutdown" | "platform_outage";
+  simulate_vpn?: boolean;
 }) =>
   request<ClaimEvaluateResult>("/api/claims/evaluate", {
     method: "POST",
@@ -485,6 +487,11 @@ export const ZONES = [
   { id: "whitefield_blr", city: "Bengaluru", area: "Whitefield" },
   { id: "hsr_layout_blr", city: "Bengaluru", area: "HSR Layout" },
   { id: "electronic_city_blr", city: "Bengaluru", area: "Electronic City" },
+  { id: "coimbatore_gandhipuram", city: "Coimbatore", area: "Gandhipuram" },
+  { id: "coimbatore_rs_puram", city: "Coimbatore", area: "RS Puram" },
+  { id: "coimbatore_peelamedu", city: "Coimbatore", area: "Peelamedu" },
+  { id: "coimbatore_saibaba_colony", city: "Coimbatore", area: "Saibaba Colony" },
+  { id: "coimbatore_race_course", city: "Coimbatore", area: "Race Course" },
 ] as const;
 
 export type ZoneId = (typeof ZONES)[number]["id"];

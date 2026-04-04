@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Clock, IndianRupee, MapPin, CloudRain, ArrowLeft, Loader2, CheckCircle2, Zap, Shield } from "lucide-react";
+import { AlertTriangle, IndianRupee, CloudRain, ArrowLeft, Loader2, CheckCircle2, Zap, Shield } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import MobileShell from "@/components/MobileShell";
 import BottomNav from "@/components/BottomNav";
 import FraudBreakdown from "@/components/FraudBreakdown";
+import FraudDemo from "@/components/FraudDemo";
 import { getCurrentUser } from "@/lib/session";
 import {
   getTriggerCheck,
@@ -26,11 +26,17 @@ const CLAIM_ZONE_CENTERS: Record<string, { lat: number; lon: number }> = {
   whitefield_blr: { lat: 12.9698, lon: 77.75 },
   hsr_layout_blr: { lat: 12.9116, lon: 77.6472 },
   electronic_city_blr: { lat: 12.8456, lon: 77.6603 },
+  coimbatore_gandhipuram: { lat: 11.0168, lon: 76.9558 },
+  coimbatore_rs_puram: { lat: 11.012, lon: 76.949 },
+  coimbatore_peelamedu: { lat: 11.025, lon: 77.002 },
+  coimbatore_saibaba_colony: { lat: 11.021, lon: 76.965 },
+  coimbatore_race_course: { lat: 11.0008, lon: 76.962 },
 };
 
 const CITY_CENTER: Record<string, { lat: number; lon: number }> = {
   bengaluru: { lat: 12.9716, lon: 77.5946 },
   bangalore: { lat: 12.9716, lon: 77.5946 },
+  coimbatore: { lat: 11.0168, lon: 76.9558 },
   mumbai: { lat: 19.076, lon: 72.8777 },
   chennai: { lat: 13.0827, lon: 80.2707 },
   kochi: { lat: 9.9312, lon: 76.2673 },
@@ -157,8 +163,18 @@ const TriggerAlert = () => {
   const firstFired = claimResult?.trigger_list?.find((item) => item.fired);
 
   return (
-    <MobileShell>
-      <div className="px-4 pt-10 pb-24">
+    <div className="min-h-screen bg-neutral-950 flex items-start justify-center gap-6 p-0 md:p-6">
+      {/* ─── Phone frame (left) ─── */}
+      <div className="relative w-full max-w-md md:max-w-[390px] min-h-screen md:min-h-0 md:h-[844px] md:rounded-[3rem] md:border-[5px] md:border-neutral-800 md:shadow-[0_0_80px_rgba(0,0,0,0.8),inset_0_0_0_1px_rgba(255,255,255,0.04)] md:overflow-hidden flex-shrink-0">
+        {/* Dynamic Island */}
+        <div className="hidden md:flex absolute top-[10px] left-1/2 -translate-x-1/2 w-[126px] h-[36px] bg-black rounded-[20px] z-50 items-center justify-center">
+          <div className="w-[10px] h-[10px] rounded-full bg-neutral-900 border border-neutral-800" />
+        </div>
+        {/* Home indicator */}
+        <div className="hidden md:block absolute bottom-[8px] left-1/2 -translate-x-1/2 w-[134px] h-[5px] bg-neutral-700 rounded-full z-50" />
+        {/* Content */}
+        <div className="w-full min-h-screen md:min-h-0 md:h-full bg-background overflow-y-auto relative">
+      <div className="md:flex-1 md:overflow-y-auto px-4 pt-10 pb-24">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <button
@@ -167,7 +183,7 @@ const TriggerAlert = () => {
           >
             <ArrowLeft size={18} className="text-foreground" strokeWidth={1.5} />
           </button>
-          <h1 className="text-lg font-extrabold text-foreground tracking-tight">Active Trigger</h1>
+          <h1 className="text-lg font-extrabold text-foreground tracking-tight">Alerts</h1>
         </div>
 
         {loading ? (
@@ -175,104 +191,87 @@ const TriggerAlert = () => {
             <Loader2 className="animate-spin text-muted-foreground" size={32} />
           </div>
         ) : !isActive ? (
-          <div className="bg-accent-green/10 border border-accent-green/20 rounded-2xl p-6 text-center">
-            <CheckCircle2 size={40} className="text-accent-green mx-auto mb-3" strokeWidth={1.5} />
-            <h3 className="text-lg font-extrabold text-foreground mb-1">All Clear</h3>
-            <p className="text-sm text-muted-foreground">No active triggers for {zoneName}</p>
-          </div>
+          <>
+            {/* All clear — flat card */}
+            <div className="card-premium rounded-2xl p-6 text-center mb-6">
+              <CheckCircle2 size={32} className="text-accent-green mx-auto mb-3" strokeWidth={1.5} />
+              <h3 className="text-base font-extrabold text-foreground mb-1">All Clear</h3>
+              <p className="text-sm text-muted-foreground">No active triggers for {zoneName}</p>
+            </div>
+          </>
         ) : (
           <>
-            {/* Alert Banner */}
-            <div className="bg-warning/10 border border-warning/20 rounded-2xl p-4 mb-6 flex items-center gap-3">
-              <AlertTriangle size={20} className="text-warning flex-shrink-0" strokeWidth={1.5} />
-              <div>
-                <h3 className="text-sm font-bold text-foreground">Trigger Active</h3>
-                <p className="text-xs text-muted-foreground">Income disruption detected</p>
-              </div>
+            {/* Status banner — minimal */}
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-2 h-2 rounded-full bg-warning animate-pulse" />
+              <p className="text-sm font-semibold text-foreground">Trigger active · income disruption detected</p>
             </div>
 
-            {/* Event Card */}
-            <div className="bg-card rounded-xl p-5 shadow-card border border-border/40 mb-4">
-              <div className="flex items-center gap-3 mb-4">
-                <CloudRain size={20} className="text-muted-foreground" strokeWidth={1.5} />
+            {/* Event hero */}
+            <div className="card-premium rounded-2xl p-5 mb-5">
+              <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-base font-bold text-foreground capitalize">{triggerType}</h3>
-                  <p className="text-sm text-muted-foreground">{zoneName} Zone</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{zoneName} Zone</p>
                 </div>
+                <CloudRain size={24} className="text-muted-foreground/40" strokeWidth={1.5} />
               </div>
 
-              <div className="space-y-3">
-                <div className="flex items-center justify-between py-2 border-b border-border">
-                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Clock size={14} /> Severity
-                  </span>
-                  <span className="text-sm font-semibold text-foreground">
+              {/* Flat rows */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Severity</span>
+                  <span className="text-xs font-bold text-foreground">
                     {((trigger?.severity ?? 0) * 100).toFixed(0)}%
                   </span>
                 </div>
-                <div className="flex items-center justify-between py-2 border-b border-border">
-                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <MapPin size={14} /> Zone
-                  </span>
-                  <span className="text-sm font-semibold text-foreground">{zoneName}</span>
-                </div>
-                <div className="flex items-center justify-between py-2 border-b border-border">
-                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <AlertTriangle size={14} /> Risk Score
-                  </span>
-                  <span className="text-sm font-semibold text-foreground">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Risk score</span>
+                  <span className="text-xs font-bold text-foreground">
                     {risk?.weather_risk_score ?? "--"}/100
                   </span>
                 </div>
-                <div className="flex items-center justify-between py-2">
-                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <IndianRupee size={14} /> Estimated Payout
-                  </span>
-                  <span className="text-lg font-extrabold text-accent-green">
+                <div className="flex items-center justify-between pt-2 border-t border-border/30">
+                  <span className="text-xs text-muted-foreground">Estimated payout</span>
+                  <span className="text-lg font-extrabold text-foreground">
                     ₹{claimResult?.payout_amount ?? "--"}
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Auto-payout result */}
+            {/* Claim status */}
             {claiming ? (
-              <div className="bg-foreground/5 rounded-2xl p-4 mb-6 text-center">
-                <Loader2 size={20} className="animate-spin text-muted-foreground mx-auto mb-2" />
-                <p className="text-sm font-semibold text-foreground">
-                  Processing zero-touch claim...
-                </p>
+              <div className="card-premium rounded-2xl p-5 mb-5 text-center">
+                <Loader2 size={18} className="animate-spin text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm font-medium text-muted-foreground">Processing claim...</p>
               </div>
             ) : claimResult ? (
-              <div className={`rounded-2xl p-4 mb-6 text-center ${
-                claimResult.claim_status === "auto-approve" || claimResult.claim_status === "approve-with-flag"
-                  ? "bg-accent-green/10 border border-accent-green/30"
-                  : "bg-warning/10 border border-warning/30"
-              }`}>
+              <div className="card-premium rounded-2xl p-5 mb-5 text-center">
                 {claimResult.claim_status === "auto-approve" || claimResult.claim_status === "approve-with-flag" ? (
                   <>
-                    <CheckCircle2 size={28} className="text-accent-green mx-auto mb-2" />
-                    <p className="text-lg font-extrabold text-accent-green mb-1">
-                      ₹{claimResult.payout_amount} Credited
+                    <CheckCircle2 size={24} className="text-accent-green mx-auto mb-2" strokeWidth={1.5} />
+                    <p className="text-xl font-extrabold text-foreground mb-1">
+                      ₹{claimResult.payout_amount}
                     </p>
-                    <p className="text-xs text-muted-foreground">{claimResult.explanation}</p>
+                    <p className="text-xs text-muted-foreground mb-2">Credited to your account</p>
                     {firstFired?.payout?.formula && (
-                      <p className="text-[11px] text-muted-foreground mt-1">{firstFired.payout.formula}</p>
+                      <p className="text-[11px] text-muted-foreground/60">{firstFired.payout.formula}</p>
                     )}
-                    <div className="flex items-center justify-center gap-2 mt-2">
-                      <Zap size={12} className="text-accent-green" strokeWidth={1.5} />
-                      <span className="text-[10px] font-bold text-accent-green">Zero-touch · Auto-processed</span>
+                    <div className="flex items-center justify-center gap-1.5 mt-3">
+                      <Zap size={11} className="text-accent-green" strokeWidth={1.5} />
+                      <span className="text-[10px] font-semibold text-muted-foreground">Zero-touch · Auto-processed</span>
                     </div>
                   </>
                 ) : (
                   <>
-                    <Shield size={28} className="text-warning mx-auto mb-2" />
+                    <Shield size={24} className="text-muted-foreground mx-auto mb-2" strokeWidth={1.5} />
                     <p className="text-sm font-bold text-foreground mb-1">
-                      Claim {claimResult.claim_status === "hold-for-review" ? "Under Review" : "Processed"}
+                      {claimResult.claim_status === "hold-for-review" ? "Under Review" : "Processed"}
                     </p>
                     <p className="text-xs text-muted-foreground">{claimResult.explanation}</p>
                     {claimResult.fraud_score > 0 && (
-                      <p className="text-[10px] text-muted-foreground mt-1">
+                      <p className="text-[10px] text-muted-foreground/60 mt-1">
                         Fraud score: {(claimResult.fraud_score * 100).toFixed(0)}%
                       </p>
                     )}
@@ -280,8 +279,8 @@ const TriggerAlert = () => {
                 )}
               </div>
             ) : (
-              <div className="bg-accent-green/10 rounded-2xl p-4 mb-6 text-center">
-                <p className="text-sm font-semibold text-accent-green">
+              <div className="card-premium rounded-2xl p-4 mb-5 text-center">
+                <p className="text-xs font-medium text-muted-foreground">
                   Payout will be credited automatically
                 </p>
               </div>
@@ -290,21 +289,21 @@ const TriggerAlert = () => {
             {!claimResult && !claiming && userId && (
               <Button
                 onClick={handleManualClaim}
-                className="w-full h-14 text-base font-bold rounded-2xl bg-foreground border-0 text-background hover:bg-foreground/90 mb-4"
+                className="w-full h-14 text-base font-bold rounded-2xl bg-foreground border-0 text-background hover:bg-foreground/90 mb-5"
               >
                 Claim Now
               </Button>
             )}
 
-            {/* Fraud Analysis Section */}
+            {/* Fraud Analysis */}
             {fraudData && (
               <div className="mb-4">
                 <FraudBreakdown assessment={fraudData} compact={!showFraudDetails} />
                 <button
                   onClick={() => setShowFraudDetails((v) => !v)}
-                  className="w-full mt-2 py-3 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors rounded-xl bg-white/5 active:bg-white/10"
+                  className="w-full mt-2 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  {showFraudDetails ? "Hide fraud details" : "Show 5-layer fraud analysis →"}
+                  {showFraudDetails ? "Hide details" : "Show fraud analysis →"}
                 </button>
               </div>
             )}
@@ -312,7 +311,7 @@ const TriggerAlert = () => {
             <Button
               onClick={() => navigate("/payouts")}
               variant="outline"
-              className="w-full h-14 text-base font-bold rounded-2xl"
+              className="w-full h-12 text-sm font-semibold rounded-2xl border-border/40"
             >
               View Payout History
             </Button>
@@ -320,7 +319,16 @@ const TriggerAlert = () => {
         )}
       </div>
       <BottomNav active="Alerts" />
-    </MobileShell>
+        </div>
+      </div>
+
+      {/* ─── Claim Tester (outside the phone, right side on desktop) ─── */}
+      {userId && (
+        <div className="hidden md:block w-[420px] max-h-[844px] overflow-y-auto flex-shrink-0 rounded-2xl border border-neutral-800 bg-neutral-900/80 p-5">
+          <FraudDemo workerId={userId} zoneId={zoneId} city={city} />
+        </div>
+      )}
+    </div>
   );
 };
 

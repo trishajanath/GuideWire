@@ -18,7 +18,7 @@ const MobileShell = ({ children, className = "" }: MobileShellProps) => {
         <div className="hidden md:block absolute bottom-[8px] left-1/2 -translate-x-1/2 w-[134px] h-[5px] bg-neutral-700 rounded-full z-50" />
         {/* Content area */}
         <div
-          className={`w-full min-h-screen md:min-h-0 md:h-full bg-background overflow-y-auto relative ${className}`}
+          className={`w-full min-h-screen md:min-h-0 md:h-full bg-background md:overflow-hidden relative md:flex md:flex-col ${className}`}
         >
           {children}
         </div>

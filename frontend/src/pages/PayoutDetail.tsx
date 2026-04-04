@@ -24,7 +24,7 @@ const PayoutDetail = () => {
   if (!claim) {
     return (
       <MobileShell>
-        <div className="px-6 pt-10 pb-24 text-center">
+        <div className="md:flex-1 md:overflow-y-auto px-6 pt-10 pb-24 text-center">
           <p className="text-muted-foreground mt-20">No payout data available</p>
           <Button variant="outline" className="mt-4" onClick={() => navigate("/payouts")}>
             Go to Payouts
@@ -47,7 +47,7 @@ const PayoutDetail = () => {
 
   return (
     <MobileShell>
-      <div className="px-6 pt-10 pb-24">
+      <div className="md:flex-1 md:overflow-y-auto px-6 pt-10 pb-24">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <button onClick={() => navigate(-1)} className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center">

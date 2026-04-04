@@ -1,7 +1,38 @@
-import { Shield, MapPin, BarChart3, Navigation, Brain, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
+import { Shield, MapPin, BarChart3, Navigation, Brain, CheckCircle2, AlertTriangle, XCircle, Smartphone, Copy, Wifi } from "lucide-react";
 import type { FraudSignal, FraudAssessment } from "@/lib/api";
 
 const LAYER_META: Record<string, { label: string; icon: typeof Shield; description: string }> = {
+  gps_in_registered_zone: {
+    label: "GPS Verification",
+    icon: MapPin,
+    description: "Location matches registered work zone",
+  },
+  app_active_during_event: {
+    label: "App Activity",
+    icon: Smartphone,
+    description: "App was open during the event",
+  },
+  zone_worker_ratio: {
+    label: "Zone Activity",
+    icon: BarChart3,
+    description: "Worker density is within normal range",
+  },
+  no_duplicate_claim: {
+    label: "Duplicate Check",
+    icon: Copy,
+    description: "No repeat claim on the same trigger",
+  },
+  claim_frequency_vs_zone_average: {
+    label: "Claim Frequency",
+    icon: Navigation,
+    description: "Claiming rate vs zone average",
+  },
+  "vpn_/_proxy_detection": {
+    label: "Network Check",
+    icon: Wifi,
+    description: "Residential IP, no VPN detected",
+  },
+  // Legacy keys
   gps_consistency: {
     label: "GPS Consistency",
     icon: MapPin,
@@ -30,23 +61,23 @@ const LAYER_META: Record<string, { label: string; icon: typeof Shield; descripti
 };
 
 function scoreColor(score: number): string {
-  if (score < 0.3) return "text-emerald-400";
-  if (score < 0.6) return "text-amber-400";
-  return "text-red-400";
+  if (score < 0.3) return "text-accent-green";
+  if (score < 0.6) return "text-warning";
+  return "text-destructive";
 }
 
 function scoreBg(score: number): string {
-  if (score < 0.3) return "bg-emerald-400/20";
-  if (score < 0.6) return "bg-amber-400/20";
-  return "bg-red-400/20";
+  if (score < 0.3) return "bg-accent-green/15";
+  if (score < 0.6) return "bg-warning/15";
+  return "bg-destructive/15";
 }
 
 function ScoreBar({ score }: { score: number }) {
   return (
-    <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
+    <div className="w-full h-2 rounded-full bg-secondary overflow-hidden">
       <div
         className={`h-full rounded-full transition-all duration-500 ${
-          score < 0.3 ? "bg-emerald-400" : score < 0.6 ? "bg-amber-400" : "bg-red-400"
+          score < 0.3 ? "bg-accent-green" : score < 0.6 ? "bg-warning" : "bg-destructive"
         }`}
         style={{ width: `${Math.min(score * 100, 100)}%` }}
       />
@@ -64,15 +95,13 @@ function LayerCard({ signal }: { signal: FraudSignal }) {
   const StatusIcon = signal.score < 0.3 ? CheckCircle2 : signal.score < 0.6 ? AlertTriangle : XCircle;
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
+    <div className="card-premium rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className={`p-1.5 rounded-lg ${scoreBg(signal.score)}`}>
-            <Icon className={`w-4 h-4 ${scoreColor(signal.score)}`} />
-          </div>
+          <Icon className={`w-4 h-4 ${scoreColor(signal.score)}`} strokeWidth={1.5} />
           <div>
-            <p className="text-sm font-semibold text-white">{meta.label}</p>
-            <p className="text-xs text-neutral-400">{meta.description}</p>
+            <p className="text-sm font-semibold text-foreground">{meta.label}</p>
+            <p className="text-xs text-muted-foreground">{meta.description}</p>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
@@ -85,9 +114,9 @@ function LayerCard({ signal }: { signal: FraudSignal }) {
 
       <ScoreBar score={signal.score} />
 
-      <p className="text-xs text-neutral-300 leading-relaxed">{signal.reason}</p>
+      <p className="text-xs text-muted-foreground leading-relaxed">{signal.reason}</p>
 
-      <div className="flex items-center gap-2 text-xs text-neutral-500">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground/60">
         <span>Confidence: {(signal.confidence * 100).toFixed(0)}%</span>
       </div>
     </div>
@@ -111,20 +140,18 @@ export default function FraudBreakdown({ assessment, compact = false }: FraudBre
 
   if (compact) {
     return (
-      <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10">
-        <div className={`p-2 rounded-lg ${overallBg}`}>
-          <Shield className={`w-5 h-5 ${overallColor}`} />
-        </div>
+      <div className="card-premium flex items-center gap-3 p-3 rounded-xl">
+        <Shield className={`w-5 h-5 ${overallColor}`} strokeWidth={1.5} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-white">Fraud Score</span>
+            <span className="text-sm font-semibold text-foreground">Fraud Score</span>
             <span
               className={`text-xs font-bold px-2 py-0.5 rounded-full ${overallBg} ${overallColor}`}
             >
               {assessment.risk_level}
             </span>
           </div>
-          <p className="text-xs text-neutral-400 truncate">{assessment.explanation}</p>
+          <p className="text-xs text-muted-foreground truncate">{assessment.explanation}</p>
         </div>
         <span className={`text-lg font-mono font-bold ${overallColor}`}>
           {(assessment.overall_score * 100).toFixed(0)}%
@@ -136,15 +163,13 @@ export default function FraudBreakdown({ assessment, compact = false }: FraudBre
   return (
     <div className="space-y-4">
       {/* Overall Score Header */}
-      <div className="rounded-xl border border-white/10 bg-white/5 p-5">
+      <div className="card-premium rounded-xl p-5">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
-            <div className={`p-2.5 rounded-xl ${overallBg}`}>
-              <Shield className={`w-6 h-6 ${overallColor}`} />
-            </div>
+            <Shield className={`w-5 h-5 ${overallColor}`} strokeWidth={1.5} />
             <div>
-              <h3 className="text-base font-bold text-white">5-Layer Fraud Analysis</h3>
-              <p className="text-xs text-neutral-400">Real-time signal correlation</p>
+              <h3 className="text-base font-bold text-foreground">6-Layer Fraud Analysis</h3>
+              <p className="text-xs text-muted-foreground">Real-time signal correlation</p>
             </div>
           </div>
           <div className="text-right">
@@ -164,7 +189,7 @@ export default function FraudBreakdown({ assessment, compact = false }: FraudBre
 
         <ScoreBar score={assessment.overall_score} />
 
-        <p className="text-sm text-neutral-300 mt-3">{assessment.explanation}</p>
+        <p className="text-sm text-muted-foreground mt-3">{assessment.explanation}</p>
       </div>
 
       {/* Per-Layer Breakdown */}

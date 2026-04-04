@@ -19,7 +19,7 @@ const BottomNav = ({ active = "Home" }: BottomNavProps) => {
   return (
     <>
       {/* Bottom bar */}
-      <nav className="fixed bottom-0 left-0 right-0 md:absolute md:bottom-0 bg-background/95 backdrop-blur-md border-t border-border/40 px-4 pb-4 pt-2 z-40">
+      <nav className="fixed bottom-0 left-0 right-0 md:static md:shrink-0 bg-background/95 backdrop-blur-md border-t border-border/40 px-4 pb-4 pt-2 z-40">
         <div className="flex justify-between items-center max-w-md mx-auto">
           {navItems.map((item) => {
             const isActive = active === item.label;

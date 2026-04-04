@@ -107,7 +107,7 @@ const Weather = () => {
 
   return (
     <MobileShell>
-      <div className="px-4 pt-10 pb-24">
+      <div className="md:flex-1 md:overflow-y-auto px-4 pt-10 pb-24">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
           <button

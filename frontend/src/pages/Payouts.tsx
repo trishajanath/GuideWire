@@ -38,7 +38,8 @@ const Payouts = () => {
       .finally(() => setLoading(false));
   }, [backendUserId]);
 
-  const approved = claims.filter((c) => c.status === "approved");
+  const isPaid = (s: string) => ["approved", "auto-approve", "approve-with-flag"].includes(s);
+  const approved = claims.filter((c) => isPaid(c.status));
   const totalAll = approved.reduce((s, c) => s + c.payout_amount, 0);
   const now = new Date();
   const totalMonth = approved
@@ -50,7 +51,7 @@ const Payouts = () => {
 
   return (
     <MobileShell>
-      <div className="px-4 pt-10 pb-24">
+      <div className="md:flex-1 md:overflow-y-auto px-4 pt-10 pb-24">
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
           <button onClick={() => navigate(-1)} className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center">
@@ -99,18 +100,18 @@ const Payouts = () => {
                   onClick={() => navigate("/payout-detail", { state: { claim: c } })}
                   className="w-full rounded-xl px-4 py-3.5 flex items-center gap-3 hover:bg-secondary/60 transition-colors text-left"
                 >
-                  <Icon size={18} className={c.status === "approved" ? "text-accent-green flex-shrink-0" : "text-muted-foreground flex-shrink-0"} strokeWidth={1.5} />
+                  <Icon size={18} className={isPaid(c.status) ? "text-accent-green flex-shrink-0" : "text-muted-foreground flex-shrink-0"} strokeWidth={1.5} />
                   <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-bold text-foreground">{meta.label}</h3>
                     <p className="text-xs text-muted-foreground">
                       {fmtDate(c.timestamp)}{" "}
-                      <span className={`ml-1 ${c.status === "approved" ? "text-accent-green" : c.status === "under_review" ? "text-warning" : "text-muted-foreground"}`}>
-                        • {c.status === "approved" ? "Paid" : c.status === "under_review" ? "Review" : c.status}
+                      <span className={`ml-1 ${isPaid(c.status) ? "text-accent-green" : c.status === "under_review" ? "text-warning" : "text-muted-foreground"}`}>
+                        • {isPaid(c.status) ? "Paid" : c.status === "under_review" ? "Review" : c.status}
                       </span>
                     </p>
                   </div>
-                  <span className={`text-base font-extrabold ${c.status === "approved" ? "text-accent-green" : "text-muted-foreground"}`}>
-                    {c.status === "approved" ? "+" : ""}₹{Math.round(c.payout_amount)}
+                  <span className={`text-base font-extrabold ${isPaid(c.status) ? "text-accent-green" : "text-muted-foreground"}`}>
+                    {isPaid(c.status) ? "+" : ""}₹{Math.round(c.payout_amount)}
                   </span>
                 </button>
               );

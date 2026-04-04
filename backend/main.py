@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -128,6 +128,11 @@ except ImportError:
     from fraud_engine import assess_fraud, GPSPoint, ClaimRecord as FraudClaimRecord, ZONE_CENTERS
 
 try:
+    from .vpn_detection import check_vpn, VPNCheckResult
+except ImportError:
+    from vpn_detection import check_vpn, VPNCheckResult
+
+try:
     from .models import (
         TriggerDecisionResponse,
         WeatherRiskResponse,
@@ -185,6 +190,11 @@ ZONE_CONFIG: dict[str, str] = {
     "whitefield_blr": "Bengaluru,IN",
     "hsr_layout_blr": "Bengaluru,IN",
     "electronic_city_blr": "Bengaluru,IN",
+    "coimbatore_gandhipuram": "Coimbatore,IN",
+    "coimbatore_rs_puram": "Coimbatore,IN",
+    "coimbatore_peelamedu": "Coimbatore,IN",
+    "coimbatore_saibaba_colony": "Coimbatore,IN",
+    "coimbatore_race_course": "Coimbatore,IN",
 }
 
 ZONE_ACTIVITY_DATA: dict[str, dict] = {
@@ -193,6 +203,11 @@ ZONE_ACTIVITY_DATA: dict[str, dict] = {
     "whitefield_blr": {"active_workers": 53, "idle_workers": 21, "avg_distance": 5.4},
     "hsr_layout_blr": {"active_workers": 41, "idle_workers": 14, "avg_distance": 3.6},
     "electronic_city_blr": {"active_workers": 34, "idle_workers": 19, "avg_distance": 4.9},
+    "coimbatore_gandhipuram": {"active_workers": 42, "idle_workers": 11, "avg_distance": 2.9},
+    "coimbatore_rs_puram": {"active_workers": 36, "idle_workers": 8, "avg_distance": 2.4},
+    "coimbatore_peelamedu": {"active_workers": 45, "idle_workers": 16, "avg_distance": 4.2},
+    "coimbatore_saibaba_colony": {"active_workers": 33, "idle_workers": 10, "avg_distance": 3.0},
+    "coimbatore_race_course": {"active_workers": 29, "idle_workers": 7, "avg_distance": 2.6},
 }
 
 WORKER_ELIGIBILITY_DB: dict[str, bool] = {
@@ -212,7 +227,7 @@ plans = {
     "Standard": {"weekly_premium": 69, "daily_cap": 800, "max_payout": 3500, "hourly_rate": 100},
     "Premium": {"weekly_premium": 99, "daily_cap": 1200, "max_payout": 6000, "hourly_rate": 150},
 }
-high_rainfall_cities = {"mumbai", "bengaluru", "bangalore", "kochi", "chennai"}
+high_rainfall_cities = {"mumbai", "bengaluru", "bangalore", "kochi", "chennai", "coimbatore"}
 low_risk_cities = {"jaipur", "indore", "nagpur"}
 mock_rainfall_by_city = {
     "mumbai": 48,
@@ -220,6 +235,7 @@ mock_rainfall_by_city = {
     "bangalore": 36,
     "kochi": 42,
     "chennai": 31,
+    "coimbatore": 32,
     "jaipur": 8,
     "indore": 10,
     "nagpur": 12,
@@ -555,6 +571,7 @@ class ClaimEvaluateRequest(BaseModel):
         "zone_shutdown",
         "platform_outage",
     ] = "none"
+    simulate_vpn: bool = False
 
 
 class TriggerEligibilityResponse(BaseModel):
@@ -609,6 +626,7 @@ class ClaimEvaluateResponse(BaseModel):
     trigger_list: list[ClaimTriggerResponse]
     demo_scenario_applied: str | None = None
     explanation: str
+    ai_verdict: str | None = None
 
 
 CLAIM_GPS_MAX_DISTANCE_KM = 15.0
@@ -619,8 +637,14 @@ CLAIM_ZONE_CENTERS: dict[str, tuple[float, float]] = {
     "whitefield_blr": (12.9698, 77.7500),
     "hsr_layout_blr": (12.9116, 77.6472),
     "electronic_city_blr": (12.8456, 77.6603),
+    "coimbatore_gandhipuram": (11.0168, 76.9558),
+    "coimbatore_rs_puram": (11.0120, 76.9490),
+    "coimbatore_peelamedu": (11.0250, 77.0020),
+    "coimbatore_saibaba_colony": (11.0210, 76.9650),
+    "coimbatore_race_course": (11.0008, 76.9620),
     "bengaluru": (12.9716, 77.5946),
     "bangalore": (12.9716, 77.5946),
+    "coimbatore": (11.0168, 76.9558),
     "mumbai": (19.0760, 72.8777),
     "chennai": (13.0827, 80.2707),
     "kochi": (9.9312, 76.2673),
@@ -775,10 +799,27 @@ def _claim_severity_multiplier(trigger_name: str, *, demand_drop_pct: float | No
 
 
 @app.post("/api/claims/evaluate", response_model=ClaimEvaluateResponse)
-async def evaluate_claim(payload: ClaimEvaluateRequest):
+async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None):
     user = users.get(payload.worker_id)
     if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+        # Auto-create a stub user so the Claim Tester / demo works without registration
+        user = {
+            "name": "Demo Worker",
+            "phone": "0000000000",
+            "city": payload.city or "Coimbatore",
+            "platform": "swiggy",
+            "selected_plan": "Standard",
+            "plan_details": plans.get("Standard", {}),
+            "zone_id": payload.zone_id,
+        }
+        users[payload.worker_id] = user
+        # Also create a stub active policy so eligibility checks pass
+        if payload.worker_id not in policies:
+            policies[payload.worker_id] = {
+                "tier": "Standard",
+                "status": "active",
+                "started": datetime.now(timezone.utc).isoformat(),
+            }
 
     policy = policies.get(payload.worker_id)
     plan_details = _claim_plan_details(user, policy)
@@ -801,6 +842,17 @@ async def evaluate_claim(payload: ClaimEvaluateRequest):
             platform_degraded=platform_degraded,
         )
         applied_scenario = payload.demo_scenario
+
+    # ── VPN / Proxy detection ──────────────────────────────────────────
+    client_ip = ""
+    if request:
+        client_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "")
+    vpn_result = await check_vpn(
+        ip_address=client_ip,
+        claimed_city=payload.city,
+        simulated_vpn=payload.simulate_vpn,
+    )
+    vpn_detected = vpn_result.is_vpn
 
     zone_center = _infer_claim_zone_center(payload.zone_id, payload.city)
     gps_in_zone = False
@@ -894,6 +946,7 @@ async def evaluate_claim(payload: ClaimEvaluateRequest):
                 zone_worker_ratio=zone_ratio,
                 duplicate_claim=duplicate_event,
                 claim_frequency_ratio=claim_frequency_ratio,
+                vpn_detected=vpn_detected,
             )
             fraud_decision = _format_fraud_decision(fraud_score)
             fraud_response = TriggerFraudResponse(
@@ -985,7 +1038,76 @@ async def evaluate_claim(payload: ClaimEvaluateRequest):
         trigger_list=claim_trigger_responses,
         demo_scenario_applied=applied_scenario,
         explanation=explanation,
+        ai_verdict=_gemini_claim_verdict(
+            claim_status=claim_status,
+            fraud_score=round(highest_fraud, 3),
+            payout_amount=payout_amount,
+            city=payload.city,
+            zone_id=payload.zone_id,
+            triggers_fired=[t.name for t in claim_trigger_responses if t.fired],
+            breakdown=[
+                {"label": b.label, "value": b.value, "weight": b.weight}
+                for t in claim_trigger_responses
+                if t.fired and t.fraud
+                for b in t.fraud.breakdown
+            ],
+            gps_in_zone=gps_in_zone,
+            app_active=app_active,
+            vpn_detected=vpn_detected,
+        ),
     )
+
+
+def _gemini_claim_verdict(
+    *,
+    claim_status: str,
+    fraud_score: float,
+    payout_amount: float,
+    city: str,
+    zone_id: str,
+    triggers_fired: list[str],
+    breakdown: list[dict],
+    gps_in_zone: bool,
+    app_active: bool,
+    vpn_detected: bool,
+) -> str | None:
+    """Use Gemini to generate a human-readable AI verdict for the claim."""
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    flagged = [b["label"] for b in breakdown if b.get("value", 0) > 0]
+    clear = [b["label"] for b in breakdown if b.get("value", 0) == 0]
+
+    system_prompt = (
+        "You are FairRoute's AI claim auditor for parametric gig-worker insurance in India. "
+        "Given structured claim data, write a concise 2-3 sentence verdict. "
+        "Mention which specific fraud signals were flagged or cleared. "
+        "Use confident, professional insurance language. No markdown. No bullet points."
+    )
+
+    user_prompt = (
+        f"Claim result:\n"
+        f"- Status: {claim_status}\n"
+        f"- Fraud score: {fraud_score * 100:.0f}%\n"
+        f"- Payout: ₹{payout_amount}\n"
+        f"- City: {city}, Zone: {zone_id}\n"
+        f"- Triggers fired: {', '.join(triggers_fired) if triggers_fired else 'None'}\n"
+        f"- GPS in zone: {gps_in_zone}\n"
+        f"- App active: {app_active}\n"
+        f"- VPN detected: {vpn_detected}\n"
+        f"- Flagged layers: {', '.join(flagged) if flagged else 'None'}\n"
+        f"- Clear layers: {', '.join(clear) if clear else 'None'}\n"
+        "Write the verdict (2-3 sentences, under 60 words)."
+    )
+
+    try:
+        result = _call_gemini(system_prompt=system_prompt, user_prompt=user_prompt, api_key=api_key)
+        if result and len(result) > 10:
+            return result[:300]
+    except Exception:
+        pass
+    return None
 
 
 def _trigger_fraud_breakdown(
@@ -995,6 +1117,7 @@ def _trigger_fraud_breakdown(
     zone_worker_ratio: float,
     duplicate_claim: bool,
     claim_frequency_ratio: float,
+    vpn_detected: bool = False,
 ) -> tuple[float, list[dict[str, float]]]:
     rule_values = {
         "gps_in_registered_zone": 0.0 if gps_in_zone else 1.0,
@@ -1002,13 +1125,15 @@ def _trigger_fraud_breakdown(
         "zone_worker_ratio": 0.0 if zone_worker_ratio > 0.4 else 1.0,
         "no_duplicate_claim": 1.0 if duplicate_claim else 0.0,
         "claim_frequency_vs_zone_average": max(0.0, min(1.0, claim_frequency_ratio)),
+        "vpn_proxy_detection": 1.0 if vpn_detected else 0.0,
     }
     weighted_rules = [
-        ("GPS in registered zone", 0.25, rule_values["gps_in_registered_zone"]),
-        ("App active during event", 0.20, rule_values["app_active_during_event"]),
-        ("Zone worker ratio", 0.25, rule_values["zone_worker_ratio"]),
-        ("No duplicate claim", 0.15, rule_values["no_duplicate_claim"]),
-        ("Claim frequency vs zone average", 0.15, rule_values["claim_frequency_vs_zone_average"]),
+        ("GPS in registered zone", 0.22, rule_values["gps_in_registered_zone"]),
+        ("App active during event", 0.18, rule_values["app_active_during_event"]),
+        ("Zone worker ratio", 0.20, rule_values["zone_worker_ratio"]),
+        ("No duplicate claim", 0.12, rule_values["no_duplicate_claim"]),
+        ("Claim frequency vs zone average", 0.12, rule_values["claim_frequency_vs_zone_average"]),
+        ("VPN / Proxy detection", 0.16, rule_values["vpn_proxy_detection"]),
     ]
 
     score = 0.0
@@ -1824,9 +1949,57 @@ def fraud_assess_endpoint(payload: FraudCheckRequest):
     return result
 
 
+class VPNCheckRequest(BaseModel):
+    simulate_vpn: bool = False
+    claimed_city: str = ""
+
+
+@app.post("/api/vpn/check")
+async def vpn_check_endpoint(payload: VPNCheckRequest, request: Request):
+    """Check if the client IP is coming from a VPN/proxy/datacenter."""
+    client_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "")
+    result = await check_vpn(
+        ip_address=client_ip,
+        claimed_city=payload.claimed_city or None,
+        simulated_vpn=payload.simulate_vpn,
+    )
+    return result.to_dict()
+
+
+def _fallback_zone_weather(zone_id: str):
+    """If the exact zone_id has no weather data, try another zone sharing the same city prefix."""
+    parts = zone_id.rsplit("_", 1)
+    if len(parts) < 2:
+        return None
+    # Try progressively shorter prefixes (e.g. coimbatore_saibaba_colony → coimbatore)
+    prefix = zone_id
+    while "_" in prefix:
+        prefix = prefix.rsplit("_", 1)[0]
+        for config_zone in ZONE_CONFIG:
+            if config_zone.startswith(prefix + "_") and config_zone != zone_id:
+                event = raw_event_repository.get_latest_by_zone(config_zone)
+                if event is not None:
+                    return event
+    return None
+
+
+def _fallback_zone_activity(zone_id: str):
+    """If the exact zone_id has no activity data, try another zone sharing the same city prefix."""
+    prefix = zone_id
+    while "_" in prefix:
+        prefix = prefix.rsplit("_", 1)[0]
+        for config_zone, data in ZONE_ACTIVITY_DATA.items():
+            if config_zone.startswith(prefix + "_") and config_zone != zone_id:
+                return data
+    return None
+
+
 @app.get("/api/risk/{zone_id}", response_model=WeatherRiskResponse)
 def get_zone_weather_risk(zone_id: str):
     latest_event = raw_event_repository.get_latest_by_zone(zone_id)
+    if latest_event is None:
+        # Fallback: try another zone in the same city (same weather data)
+        latest_event = _fallback_zone_weather(zone_id)
     if latest_event is None:
         raise HTTPException(status_code=404, detail="No weather data found for zone")
 
@@ -1851,7 +2024,7 @@ def get_zone_weather_risk(zone_id: str):
 
 @app.get("/api/activity/{zone_id}", response_model=ZoneActivityResponse)
 def get_zone_activity(zone_id: str):
-    activity_data = ZONE_ACTIVITY_DATA.get(zone_id)
+    activity_data = ZONE_ACTIVITY_DATA.get(zone_id) or _fallback_zone_activity(zone_id)
     if activity_data is None:
         raise HTTPException(status_code=404, detail="No activity data found for zone")
 
@@ -1867,9 +2040,11 @@ def get_zone_activity(zone_id: str):
 def get_trigger_check(zone_id: str):
     latest_event = raw_event_repository.get_latest_by_zone(zone_id)
     if latest_event is None:
+        latest_event = _fallback_zone_weather(zone_id)
+    if latest_event is None:
         raise HTTPException(status_code=404, detail="No weather data found for zone")
 
-    activity_data = ZONE_ACTIVITY_DATA.get(zone_id)
+    activity_data = ZONE_ACTIVITY_DATA.get(zone_id) or _fallback_zone_activity(zone_id)
     if activity_data is None:
         raise HTTPException(status_code=404, detail="No activity data found for zone")
 
@@ -2116,10 +2291,6 @@ def get_premium_zones_endpoint():
 def get_premium_model_info_endpoint():
     return get_premium_model_info()
 
-
-@app.post("/api/claims/evaluate", response_model=ClaimEvaluateResponse)
-async def evaluate_claim_endpoint(payload: ClaimEvaluateRequest):
-    return await evaluate_claim(payload)
 
 
 @app.get("/api/claims/{user_id}")
