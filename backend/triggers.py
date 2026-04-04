@@ -56,12 +56,12 @@ def _build_response(trigger: str, breached: bool, value: float | int) -> dict:
 
 def check_rainfall_trigger(rainfall_mm_last_3_hours: float) -> dict:
     breached = rainfall_mm_last_3_hours > 30
-    return _build_response("rainfall", breached, rainfall_mm_last_3_hours)
+    return _build_response("heavy_rainfall", breached, rainfall_mm_last_3_hours)
 
 
 def check_temperature_trigger(temperature_celsius: float) -> dict:
     breached = temperature_celsius > 42
-    return _build_response("temperature", breached, temperature_celsius)
+    return _build_response("extreme_heat", breached, temperature_celsius)
 
 
 def check_cyclone_alert_trigger(imd_alert_level: str) -> dict:

@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { Users, AlertTriangle, IndianRupee, TrendingUp, CloudRain, MapPin, BarChart3, Settings, LogOut, Shield, Zap, FileText } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import logo from "@/assets/fairroute-logo.png";
+import { createAdminIMDAlert } from "@/lib/api";
 
 const sidebarItems = [
   { icon: BarChart3, label: "Overview", active: true },
@@ -26,6 +29,31 @@ const recentPayouts = [
 ];
 
 const AdminDashboard = () => {
+  const navigate = useNavigate();
+  const [zone, setZone] = useState("chennai");
+  const [alertLevel, setAlertLevel] = useState<"green" | "yellow" | "orange" | "red">("yellow");
+  const [eventType, setEventType] = useState<"cyclone" | "rain" | "heatwave">("rain");
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
+
+  const handleSaveAlert = async () => {
+    if (!zone.trim()) return;
+    setSaving(true);
+    setSaveMessage("");
+    try {
+      const saved = await createAdminIMDAlert({
+        zone: zone.trim(),
+        alert_level: alertLevel,
+        event_type: eventType,
+      });
+      setSaveMessage(`Saved ${saved.alert_level.toUpperCase()} ${saved.event} alert for ${saved.zone}`);
+    } catch (err: any) {
+      setSaveMessage(err?.message ?? "Failed to save IMD alert");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background flex">
       {/* Sidebar */}
@@ -128,6 +156,52 @@ const AdminDashboard = () => {
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* IMD Alert Management */}
+          <div className="bg-card rounded-2xl p-5 shadow-card mb-6">
+            <h2 className="text-base font-bold text-foreground mb-4">IMD Alert Management</h2>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <input
+                value={zone}
+                onChange={(e) => setZone(e.target.value)}
+                placeholder="Zone (e.g. chennai)"
+                className="h-11 rounded-xl bg-background border border-border px-3 text-sm text-foreground"
+              />
+              <select
+                value={alertLevel}
+                onChange={(e) => setAlertLevel(e.target.value as "green" | "yellow" | "orange" | "red")}
+                className="h-11 rounded-xl bg-background border border-border px-3 text-sm text-foreground"
+              >
+                <option value="green">Green</option>
+                <option value="yellow">Yellow</option>
+                <option value="orange">Orange</option>
+                <option value="red">Red</option>
+              </select>
+              <select
+                value={eventType}
+                onChange={(e) => setEventType(e.target.value as "cyclone" | "rain" | "heatwave")}
+                className="h-11 rounded-xl bg-background border border-border px-3 text-sm text-foreground"
+              >
+                <option value="rain">Rain</option>
+                <option value="cyclone">Cyclone</option>
+                <option value="heatwave">Heatwave</option>
+              </select>
+              <button
+                onClick={handleSaveAlert}
+                disabled={saving}
+                className="h-11 rounded-xl bg-foreground text-background text-sm font-semibold hover:bg-foreground/90 disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Save Alert"}
+              </button>
+            </div>
+            {saveMessage ? <p className="text-xs text-muted-foreground mt-3">{saveMessage}</p> : null}
+            <button
+              onClick={() => navigate("/admin/imd-alerts")}
+              className="mt-3 text-xs font-semibold text-foreground hover:underline"
+            >
+              View recent IMD alert history
+            </button>
           </div>
 
           {/* Recent Payouts Table */}

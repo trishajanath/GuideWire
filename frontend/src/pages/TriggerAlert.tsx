@@ -9,6 +9,7 @@ import { getCurrentUser } from "@/lib/session";
 import {
   getTriggerCheck,
   getWeatherRisk,
+  getIMDAlert,
   autoClaim,
   assessFraud,
   ZONES,
@@ -16,18 +17,21 @@ import {
   type WeatherRisk,
   type AutoClaimResult,
   type FraudAssessment,
+  type IMDAlert,
 } from "@/lib/api";
 
 const TriggerAlert = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
   const zoneId = user?.zoneId ?? ZONES[0].id;
-  const zoneName = ZONES.find((z) => z.id === zoneId)?.area ?? zoneId;
+  const city = user?.city ?? "bengaluru";
+  const zoneName = user?.zoneArea ?? ZONES.find((z) => z.id === zoneId)?.area ?? zoneId;
 
   const [trigger, setTrigger] = useState<TriggerCheckT | null>(null);
   const [risk, setRisk] = useState<WeatherRisk | null>(null);
   const [claimResult, setClaimResult] = useState<AutoClaimResult | null>(null);
   const [fraudData, setFraudData] = useState<FraudAssessment | null>(null);
+  const [imdAlert, setImdAlert] = useState<IMDAlert | null>(null);
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
   const [autoClaimed, setAutoClaimed] = useState(false);
@@ -47,6 +51,13 @@ const TriggerAlert = () => {
         if (cancelled) return;
         setTrigger(t);
         setRisk(r);
+
+        try {
+          const imd = await getIMDAlert(city);
+          if (!cancelled) setImdAlert(imd);
+        } catch {
+          if (!cancelled) setImdAlert(null);
+        }
 
         // Fetch real-time fraud assessment
         if (userId) {
@@ -98,8 +109,11 @@ const TriggerAlert = () => {
     }
   };
 
-  const isActive = trigger?.trigger === true;
-  const triggerType = trigger?.type?.replace(/_/g, " ") ?? "Unknown";
+  const imdRed = imdAlert?.alert_level === "red";
+  const isActive = imdRed || trigger?.trigger === true;
+  const triggerType = imdRed
+    ? `imd ${imdAlert?.event ?? "alert"}`
+    : trigger?.type?.replace(/_/g, " ") ?? "Unknown";
 
   return (
     <MobileShell>

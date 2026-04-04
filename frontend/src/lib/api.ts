@@ -72,6 +72,30 @@ export interface CityWeather {
 export const getCityWeather = (city: string) =>
   request<CityWeather>(`/api/city/weather?city=${encodeURIComponent(city)}`);
 
+export interface IMDAlert {
+  zone: string;
+  alert_level: "green" | "yellow" | "orange" | "red";
+  event: "cyclone" | "rain" | "heatwave";
+  source: "admin" | "rss";
+  timestamp: string;
+}
+
+export const createAdminIMDAlert = (data: {
+  zone: string;
+  alert_level: "green" | "yellow" | "orange" | "red";
+  event_type: "cyclone" | "rain" | "heatwave";
+}) =>
+  request<IMDAlert>("/api/admin/imd-alert", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const getIMDAlert = (zone: string) =>
+  request<IMDAlert>(`/api/imd-alert/${encodeURIComponent(zone)}`);
+
+export const getRecentIMDAlerts = (limit: number = 30) =>
+  request<{ alerts: IMDAlert[] }>(`/api/admin/imd-alerts?limit=${encodeURIComponent(String(limit))}`);
+
 /* ---- Plan selection ---- */
 
 export interface PlanDetails {
@@ -235,6 +259,49 @@ export interface DashboardData {
 
 export const getDashboard = (userId: number) =>
   request<DashboardData>(`/dashboard/${userId}`);
+
+/* ---- Policy lifecycle ---- */
+
+export interface PolicyRecord {
+  worker_id: number;
+  tier: "Basic" | "Standard" | "Premium";
+  status: "active" | "paused" | "cancelled";
+  start_date: string;
+  next_renewal_date: string;
+  paused_until?: string;
+  updated_at: string;
+}
+
+export interface PolicyHistoryRecord {
+  id: string;
+  worker_id: number;
+  action: "created" | "pause" | "resume" | "upgrade" | "cancel";
+  detail: string;
+  timestamp: string;
+}
+
+export const getPolicy = (workerId: number) =>
+  request<PolicyRecord>(`/policy/${workerId}`);
+
+export const pausePolicy = (workerId: number) =>
+  request<PolicyRecord>(`/policy/${workerId}/pause`, {
+    method: "POST",
+    body: JSON.stringify({ days: 7 }),
+  });
+
+export const resumePolicyApi = (workerId: number) =>
+  request<PolicyRecord>(`/policy/${workerId}/resume`, {
+    method: "POST",
+  });
+
+export const upgradePolicyApi = (workerId: number, tier: "Basic" | "Standard" | "Premium") =>
+  request<PolicyRecord>(`/policy/${workerId}/upgrade`, {
+    method: "POST",
+    body: JSON.stringify({ tier }),
+  });
+
+export const getPolicyHistoryApi = (workerId: number) =>
+  request<{ history: PolicyHistoryRecord[] }>(`/policy/${workerId}/history`);
 
 /* ---- Auto claim ---- */
 

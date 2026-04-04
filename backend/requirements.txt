@@ -3,6 +3,7 @@ uvicorn
 pydantic
 apscheduler
 httpx
+feedparser
 pymongo
 google-genai
 scikit-learn

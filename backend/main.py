@@ -87,6 +87,23 @@ except ImportError:
     from assistant import generate_assistant_reply, generate_city_zone_suggestions
 
 try:
+    from .imd_alerts import (
+        create_imd_alert,
+        fetch_imd_alerts,
+        get_latest_imd_alert,
+        init_imd_alerts_table,
+        list_recent_imd_alerts,
+    )
+except ImportError:
+    from imd_alerts import (
+        create_imd_alert,
+        fetch_imd_alerts,
+        get_latest_imd_alert,
+        init_imd_alerts_table,
+        list_recent_imd_alerts,
+    )
+
+try:
     from .fraud_engine import assess_fraud, GPSPoint, ClaimRecord as FraudClaimRecord, ZONE_CENTERS
 except ImportError:
     from fraud_engine import assess_fraud, GPSPoint, ClaimRecord as FraudClaimRecord, ZONE_CENTERS
@@ -389,6 +406,8 @@ async def ingest_weather_events_job() -> None:
 
 @app.on_event("startup")
 async def start_background_scheduler() -> None:
+    init_imd_alerts_table()
+
     scheduler.add_job(
         ingest_weather_events_job,
         trigger=IntervalTrigger(minutes=15),
@@ -397,8 +416,17 @@ async def start_background_scheduler() -> None:
         max_instances=1,
         coalesce=True,
     )
+    scheduler.add_job(
+        fetch_imd_alerts,
+        trigger=IntervalTrigger(minutes=15),
+        id="imd_rss_ingestion",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
     await ingest_weather_events_job()
+    fetch_imd_alerts()
 
 
 @app.on_event("shutdown")
@@ -489,6 +517,69 @@ class CityWeatherResponse(BaseModel):
     weather_risk_score: int
     trigger_probability: float
     trigger_type: str
+
+
+class IMDAlertRequest(BaseModel):
+    zone: str = Field(..., min_length=1)
+    alert_level: Literal["green", "yellow", "orange", "red"]
+    event_type: Literal["cyclone", "rain", "heatwave"]
+
+
+class IMDAlertResponse(BaseModel):
+    zone: str
+    alert_level: Literal["green", "yellow", "orange", "red"]
+    event: Literal["cyclone", "rain", "heatwave"]
+    source: Literal["admin", "rss"]
+    timestamp: str
+
+
+class IMDAlertHistoryResponse(BaseModel):
+    alerts: list[IMDAlertResponse]
+
+
+def _zone_candidates(zone: str) -> list[str]:
+    lowered = zone.strip().lower()
+    if not lowered:
+        return []
+    candidates = [lowered]
+    if "_" in lowered:
+        city_token = lowered.split("_")[0]
+        if city_token and city_token not in candidates:
+            candidates.append(city_token)
+    if "," in lowered:
+        simple = lowered.split(",")[0].strip()
+        if simple and simple not in candidates:
+            candidates.append(simple)
+    return candidates
+
+
+def _get_latest_alert_for_context(zone: str) -> dict | None:
+    for candidate in _zone_candidates(zone):
+        alert = get_latest_imd_alert(candidate)
+        if alert is not None:
+            return alert
+    return None
+
+
+def _apply_imd_adjustment_to_risk(risk: dict, alert: dict | None) -> dict:
+    if alert is None:
+        return risk
+
+    adjusted = dict(risk)
+    level = alert.get("alert_level", "green")
+    event = alert.get("event_type", "rain")
+
+    if level == "orange":
+        adjusted["weather_risk_score"] = min(100, int(adjusted.get("weather_risk_score", 0)) + 15)
+        adjusted["trigger_probability"] = min(1.0, float(adjusted.get("trigger_probability", 0)) + 0.2)
+        if adjusted.get("trigger_type") == "none":
+            adjusted["trigger_type"] = f"imd_{event}"
+    elif level == "red":
+        adjusted["weather_risk_score"] = max(85, int(adjusted.get("weather_risk_score", 0)))
+        adjusted["trigger_probability"] = max(0.95, float(adjusted.get("trigger_probability", 0)))
+        adjusted["trigger_type"] = f"imd_{event}"
+
+    return adjusted
 
 
 def update_last_trigger(user: dict) -> dict:
@@ -723,8 +814,11 @@ async def auto_claim(payload: AutoClaimRequest):
             "humidity": event.humidity,
             "wind_speed": event.wind_speed,
         })
-        weather_risk_score = risk["weather_risk_score"]
-        trigger_type = risk["trigger_type"]
+        imd_alert = _get_latest_alert_for_context(zone_id or city)
+        adjusted_risk = _apply_imd_adjustment_to_risk(risk, imd_alert)
+
+        weather_risk_score = adjusted_risk["weather_risk_score"]
+        trigger_type = adjusted_risk["trigger_type"]
         trigger_active = weather_risk_score > 60
 
         # Also get zone anomaly
@@ -735,13 +829,21 @@ async def auto_claim(payload: AutoClaimRequest):
         anomaly_score = activity["anomaly_score"]
 
         # Determine trigger from real data
-        trigger_result = detect_trigger(weather_risk_score, anomaly_score, trigger_type)
-        weather_trigger = {
-            "trigger_status": trigger_result.get("trigger", False),
-            "trigger_type": trigger_type if trigger_result.get("trigger") else None,
-            "severity_level": trigger_result.get("severity", 0),
-            "rainfall_mm": event.rainfall,
-        }
+        if imd_alert and imd_alert.get("alert_level") == "red":
+            weather_trigger = {
+                "trigger_status": True,
+                "trigger_type": f"imd_{imd_alert.get('event_type', 'rain')}",
+                "severity_level": 1.5,
+                "rainfall_mm": event.rainfall,
+            }
+        else:
+            trigger_result = detect_trigger(weather_risk_score, anomaly_score, trigger_type)
+            weather_trigger = {
+                "trigger_status": trigger_result.get("trigger", False),
+                "trigger_type": trigger_type if trigger_result.get("trigger") else None,
+                "severity_level": trigger_result.get("severity", 0),
+                "rainfall_mm": event.rainfall,
+            }
     else:
         # Fallback to mock
         weather_trigger = check_weather_trigger(city)
@@ -924,6 +1026,8 @@ def get_zone_weather_risk(zone_id: str):
             "wind_speed": latest_event.wind_speed,
         }
     )
+    imd_alert = _get_latest_alert_for_context(zone_id)
+    risk = _apply_imd_adjustment_to_risk(risk, imd_alert)
 
     return {
         "zone": zone_id,
@@ -965,6 +1069,16 @@ def get_trigger_check(zone_id: str):
             "wind_speed": latest_event.wind_speed,
         }
     )
+    imd_alert = _get_latest_alert_for_context(zone_id)
+    weather_risk = _apply_imd_adjustment_to_risk(weather_risk, imd_alert)
+
+    if imd_alert and imd_alert.get("alert_level") == "red":
+        return {
+            "trigger": True,
+            "type": f"imd_{imd_alert.get('event_type', 'rain')}",
+            "severity": 1.5,
+        }
+
     activity = calculate_zone_activity_score(activity_data)
 
     return detect_trigger(
@@ -1015,6 +1129,54 @@ def assistant_chat_endpoint(payload: AssistantChatRequest):
     return {"reply": reply}
 
 
+@app.post("/api/admin/imd-alert", response_model=IMDAlertResponse)
+def create_admin_imd_alert(payload: IMDAlertRequest):
+    created = create_imd_alert(
+        zone=payload.zone,
+        alert_level=payload.alert_level,
+        event_type=payload.event_type,
+        source="admin",
+    )
+    return {
+        "zone": created["zone"],
+        "alert_level": created["alert_level"],
+        "event": created["event_type"],
+        "source": created["source"],
+        "timestamp": created["timestamp"],
+    }
+
+
+@app.get("/api/imd-alert/{zone}", response_model=IMDAlertResponse)
+def get_imd_alert_by_zone(zone: str):
+    latest = _get_latest_alert_for_context(zone)
+    if latest is None:
+        raise HTTPException(status_code=404, detail="No IMD alert found for zone")
+
+    return {
+        "zone": latest["zone"],
+        "alert_level": latest["alert_level"],
+        "event": latest["event_type"],
+        "source": latest["source"],
+        "timestamp": latest["timestamp"],
+    }
+
+
+@app.get("/api/admin/imd-alerts", response_model=IMDAlertHistoryResponse)
+def get_recent_imd_alerts(limit: int = 30):
+    rows = list_recent_imd_alerts(limit=limit)
+    alerts = [
+        {
+            "zone": row["zone"],
+            "alert_level": row["alert_level"],
+            "event": row["event_type"],
+            "source": row["source"],
+            "timestamp": row["timestamp"],
+        }
+        for row in rows
+    ]
+    return {"alerts": alerts}
+
+
 @app.get("/api/city-zones", response_model=CityZonesResponse)
 def city_zones(city: str):
     normalized_city = _normalize_city_display(city)
@@ -1043,7 +1205,20 @@ async def city_weather(city: str):
     if payload is None:
         raise HTTPException(status_code=404, detail="No weather data found for city")
 
-    return build_city_weather_response(normalized_city, payload)
+    response = build_city_weather_response(normalized_city, payload)
+    imd_alert = _get_latest_alert_for_context(normalized_city)
+    adjusted_risk = _apply_imd_adjustment_to_risk(
+        {
+            "weather_risk_score": response["weather_risk_score"],
+            "trigger_probability": response["trigger_probability"],
+            "trigger_type": response["trigger_type"],
+        },
+        imd_alert,
+    )
+    response["weather_risk_score"] = int(adjusted_risk["weather_risk_score"])
+    response["trigger_probability"] = float(adjusted_risk["trigger_probability"])
+    response["trigger_type"] = str(adjusted_risk["trigger_type"])
+    return response
 
 
 @app.get("/api/premium-quote")

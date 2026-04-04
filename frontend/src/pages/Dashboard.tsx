@@ -213,7 +213,7 @@ const Dashboard = () => {
           <div className="h-px bg-border/40 mx-4 my-2" />
 
           <button
-            onClick={() => navigate("/plans")}
+            onClick={() => navigate("/policy")}
             className="w-full rounded-xl px-4 py-4 flex items-center gap-3 text-left hover:bg-secondary/60 transition-colors touch-target active:bg-secondary"
           >
             <Shield size={18} className="text-muted-foreground flex-shrink-0" strokeWidth={1.5} />

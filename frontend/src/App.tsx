@@ -15,7 +15,10 @@ import Payouts from "./pages/Payouts";
 import PayoutDetail from "./pages/PayoutDetail";
 import Weather from "./pages/Weather";
 import Profile from "./pages/Profile";
+import Policy from "./pages/Policy";
+import PolicyHistory from "./pages/PolicyHistory";
 import AdminDashboard from "./pages/AdminDashboard";
+import AdminIMDAlerts from "./pages/AdminIMDAlerts";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -39,7 +42,10 @@ const App = () => (
           <Route path="/payout-detail" element={<PayoutDetail />} />
           <Route path="/weather" element={<Weather />} />
           <Route path="/profile" element={<Profile />} />
+          <Route path="/policy" element={<Policy />} />
+          <Route path="/policy/history" element={<PolicyHistory />} />
           <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/admin/imd-alerts" element={<AdminIMDAlerts />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

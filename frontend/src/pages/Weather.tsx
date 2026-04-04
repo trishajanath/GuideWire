@@ -7,8 +7,10 @@ import { getCurrentUser } from "@/lib/session";
 import {
   getCityWeather,
   getCityZones,
+  getIMDAlert,
   type CityWeather,
   type CityZone,
+  type IMDAlert,
 } from "@/lib/api";
 
 const riskColors: Record<string, string> = {
@@ -25,6 +27,7 @@ const Weather = () => {
 
   const [weather, setWeather] = useState<CityWeather | null>(null);
   const [zones, setZones] = useState<CityZone[]>([]);
+  const [imdAlert, setImdAlert] = useState<IMDAlert | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -33,6 +36,7 @@ const Weather = () => {
     Promise.allSettled([
       getCityWeather(city).then((d) => { if (!cancelled) setWeather(d); }),
       getCityZones(city).then((d) => { if (!cancelled) setZones(d.zones); }),
+      getIMDAlert(city).then((d) => { if (!cancelled) setImdAlert(d); }).catch(() => null),
     ])
       .then((results) => {
         if (!cancelled && results.every((r) => r.status === "rejected")) setError("No weather data yet");
@@ -147,6 +151,19 @@ const Weather = () => {
                 )}
               </div>
             </div>
+
+            {imdAlert && (
+              <div className="card-premium rounded-2xl p-5 shadow-card mb-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-foreground">IMD Alert</h3>
+                  <span className={`text-xs font-bold uppercase ${imdAlert.alert_level === "red" ? "text-destructive" : imdAlert.alert_level === "orange" ? "text-warning" : "text-accent-green"}`}>
+                    {imdAlert.alert_level}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2 capitalize">Event: {imdAlert.event}</p>
+                <p className="text-xs text-muted-foreground mt-1 uppercase">Source: {imdAlert.source}</p>
+              </div>
+            )}
 
             {/* Zone Comparison — with labels */}
             {allZones.length > 0 && (

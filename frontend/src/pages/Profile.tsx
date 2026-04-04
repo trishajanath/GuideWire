@@ -9,7 +9,7 @@ const Profile = () => {
   const user = getCurrentUser();
 
   const menuItems = [
-    { icon: Shield, label: "My Plan", desc: user?.selectedPlan ?? "No plan selected" },
+    { icon: Shield, label: "My Plan", desc: user?.selectedPlan ?? "No plan selected", path: "/policy" },
     { icon: MapPin, label: "Zone", desc: user?.zoneArea ? `${user.zoneArea}, ${user.city}` : user?.city ?? "Not set" },
     { icon: CreditCard, label: "Payment Methods", desc: user?.upiId ? "UPI linked" : "Not linked" },
     { icon: HelpCircle, label: "Help & Support", desc: "FAQs, contact us" },
@@ -48,6 +48,7 @@ const Profile = () => {
           {menuItems.map((item) => (
             <button
               key={item.label}
+              onClick={() => item.path && navigate(item.path)}
               className="w-full rounded-xl px-4 py-3.5 flex items-center gap-3 hover:bg-secondary/60 transition-colors"
             >
               <item.icon size={18} className="text-muted-foreground flex-shrink-0" strokeWidth={1.5} />
