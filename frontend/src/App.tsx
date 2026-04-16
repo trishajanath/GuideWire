@@ -20,6 +20,7 @@ import Policy from "./pages/Policy";
 import PolicyHistory from "./pages/PolicyHistory";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminIMDAlerts from "./pages/AdminIMDAlerts";
+import DemoSimulation from "./pages/DemoSimulation";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -48,6 +49,7 @@ const App = () => (
           <Route path="/policy/history" element={<PolicyHistory />} />
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/admin/imd-alerts" element={<AdminIMDAlerts />} />
+          <Route path="/demo" element={<DemoSimulation />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

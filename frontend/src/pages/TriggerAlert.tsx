@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { AlertTriangle, IndianRupee, CloudRain, ArrowLeft, Loader2, CheckCircle2, Zap, Shield, Sparkles, Clock, ChevronDown, ChevronUp } from "lucide-react";
+import { AlertTriangle, IndianRupee, CloudRain, ArrowLeft, Loader2, CheckCircle2, Zap, Shield, Sparkles, Clock, ChevronDown, ChevronUp, CreditCard, Banknote } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,12 +14,14 @@ import {
   getIMDAlert,
   evaluateClaimEngine,
   assessFraud,
+  processPayout,
   ZONES,
   type TriggerCheck as TriggerCheckT,
   type WeatherRisk,
   type ClaimEvaluateResult,
   type FraudAssessment,
   type IMDAlert,
+  type PayoutTransaction,
 } from "@/lib/api";
 
 const CLAIM_ZONE_CENTERS: Record<string, { lat: number; lon: number }> = {
@@ -302,7 +304,9 @@ const TriggerAlert = () => {
   const [error, setError] = useState("");
   const [generatedAlerts, setGeneratedAlerts] = useState<GeneratedAlert[]>([]);
   const [expandedAlert, setExpandedAlert] = useState<number | null>(null);
+  const [payoutTxn, setPayoutTxn] = useState<PayoutTransaction | null>(null);
 
+  const GATEWAYS = ["razorpay", "upi_direct", "stripe"] as const;
   const selectedPlan = user?.selectedPlan;
   const userId = user?.backendUserId;
 
@@ -350,6 +354,23 @@ const TriggerAlert = () => {
             });
             if (!cancelled) {
               setClaimResult(claim);
+              // Auto-process instant payout through payment gateway
+              if (
+                (claim.claim_status === "auto-approve" || claim.claim_status === "approve-with-flag") &&
+                claim.payout_amount > 0
+              ) {
+                try {
+                  const gateway = GATEWAYS[Math.floor(Math.random() * GATEWAYS.length)];
+                  const txn = await processPayout({
+                    worker_id: userId,
+                    claim_id: `CLM-${Date.now()}`,
+                    amount: claim.payout_amount,
+                    gateway,
+                    upi_id: "worker@upi",
+                  });
+                  if (!cancelled) setPayoutTxn(txn);
+                } catch { /* payout processing failed silently */ }
+              }
             }
           } catch {
             // Claim failed silently — user can retry
@@ -434,6 +455,23 @@ const TriggerAlert = () => {
         app_active: true,
       });
       setClaimResult(claim);
+      // Auto-process instant payout
+      if (
+        (claim.claim_status === "auto-approve" || claim.claim_status === "approve-with-flag") &&
+        claim.payout_amount > 0
+      ) {
+        try {
+          const gateway = GATEWAYS[Math.floor(Math.random() * GATEWAYS.length)];
+          const txn = await processPayout({
+            worker_id: userId,
+            claim_id: `CLM-${Date.now()}`,
+            amount: claim.payout_amount,
+            gateway,
+            upi_id: "worker@upi",
+          });
+          setPayoutTxn(txn);
+        } catch { /* payout processing failed silently */ }
+      }
     } catch {
       /* ignore */
     } finally {
@@ -697,6 +735,50 @@ const TriggerAlert = () => {
                 ) : (
                   <div className="card-premium rounded-2xl p-4 mb-5 text-center">
                     <p className="text-xs font-medium text-muted-foreground">Payout will be credited automatically</p>
+                  </div>
+                )}
+
+                {/* Instant Payout Gateway Receipt */}
+                {payoutTxn && (
+                  <div className="rounded-2xl border border-accent-green/20 bg-card p-4 mb-5 space-y-2 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
+                    <div className="flex items-center gap-2 mb-1">
+                      <CreditCard size={14} className="text-accent-green" strokeWidth={1.5} />
+                      <p className="text-xs font-bold text-foreground uppercase tracking-wider">Payment Gateway</p>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-muted-foreground">Gateway</span>
+                      <span className="text-[11px] font-semibold text-foreground flex items-center gap-1">
+                        {payoutTxn.gateway === "razorpay" ? (
+                          <><CreditCard size={10} className="text-blue-400" /> Razorpay</>
+                        ) : payoutTxn.gateway === "upi_direct" ? (
+                          <><Banknote size={10} className="text-green-400" /> UPI Direct</>
+                        ) : (
+                          <><CreditCard size={10} className="text-purple-400" /> Stripe</>
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-muted-foreground">Txn ID</span>
+                      <span className="text-[10px] font-mono text-foreground/70">{payoutTxn.txn_id}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-muted-foreground">Status</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${payoutTxn.status === "completed" ? "bg-accent-green/15 text-accent-green" : "bg-warning/15 text-warning"}`}>
+                        {payoutTxn.status.toUpperCase()}
+                      </span>
+                    </div>
+                    {payoutTxn.processing_time_ms != null && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-muted-foreground">Speed</span>
+                        <span className="text-[10px] font-mono text-accent-green">{payoutTxn.processing_time_ms}ms</span>
+                      </div>
+                    )}
+                    {payoutTxn.upi_ref && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-muted-foreground">UPI Ref</span>
+                        <span className="text-[10px] font-mono text-foreground/70">{payoutTxn.upi_ref}</span>
+                      </div>
+                    )}
                   </div>
                 )}
 

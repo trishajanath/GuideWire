@@ -142,9 +142,11 @@ function buildFraudAssessment(result: ClaimEvaluateResult): FraudAssessment | nu
         ? "All checks passed — claim auto-approved."
         : claimStatus === "approve-with-flag"
           ? "Minor flags detected — approved with review flag."
-          : claimStatus === "hold-for-review"
-            ? "Fraud signals detected — claim held for manual review."
-            : "No parametric trigger fired.",
+          : claimStatus === "auto-reject"
+            ? "Multiple fraud signals confirmed — claim auto-rejected."
+            : claimStatus === "hold-for-review"
+              ? "Fraud signals detected — claim held for manual review."
+              : "No parametric trigger fired.",
   } as FraudAssessment;
 }
 
@@ -339,22 +341,17 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
     setLoading(true);
     setResult(null);
 
-    try {
-      if (hasDuplicate && runCount === 0) {
-        await evaluateClaimEngine({
-          worker_id: workerId,
-          zone_id: selectedZone,
-          city: effectiveCity,
-          gps_lat: gps.lat,
-          gps_lon: gps.lon,
-          hours_lost: 3,
-          app_active: appActive,
-          demo_mode: true,
-          demo_scenario: "heavy_rain",
-          simulate_vpn: false,
-        });
-      }
+    // Build explicit fraud overrides so only the toggled scenarios flag,
+    // regardless of accumulated claim history in the backend.
+    const fraudOverrides = {
+      force_duplicate: hasDuplicate,
+      force_frequency: hasDuplicate,   // frequency also rises with duplicate
+      force_gps_fail: hasGpsSpoof,
+      force_app_inactive: hasAppInactive,
+      force_vpn: hasVpn,
+    };
 
+    try {
       const res = await evaluateClaimEngine({
         worker_id: workerId,
         zone_id: selectedZone,
@@ -366,6 +363,7 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
         demo_mode: true,
         demo_scenario: demoScenario,
         simulate_vpn: hasVpn,
+        fraud_test_overrides: fraudOverrides,
       });
       setResult(res);
       setRunCount((c) => c + 1);
@@ -530,7 +528,9 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
                   ? `Approved — ₹${result.payout_amount}`
                   : result.claim_status === "approve-with-flag"
                     ? `Flagged — ₹${result.payout_amount}`
-                    : "Blocked — ₹0"}
+                    : result.claim_status === "auto-reject"
+                      ? "Rejected — ₹0"
+                      : "Blocked — ₹0"}
               </p>
             </div>
             <div className="flex items-center justify-center gap-3 text-xs text-muted-foreground">
@@ -603,7 +603,7 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
             <div className="rounded-xl border border-accent-green/20 bg-accent-green/[0.05] p-3">
               <p className="text-[11px] text-accent-green font-medium flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                All 6 checks passed — legitimate claim auto-approved
+                All 5 checks passed — legitimate claim auto-approved
               </p>
             </div>
           )}

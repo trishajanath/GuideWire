@@ -1,7 +1,39 @@
-import { Shield, MapPin, BarChart3, Navigation, Brain, CheckCircle2, AlertTriangle, XCircle, Smartphone, Copy, Wifi } from "lucide-react";
+import { Shield, MapPin, BarChart3, Navigation, Brain, CheckCircle2, AlertTriangle, XCircle, Smartphone, Copy, Wifi, Users } from "lucide-react";
 import type { FraudSignal, FraudAssessment } from "@/lib/api";
 
 const LAYER_META: Record<string, { label: string; icon: typeof Shield; clearDesc: string; flaggedDesc: string }> = {
+  /* ── 5-layer keys (README §6) ── */
+  gps_verification: {
+    label: "GPS Validation",
+    icon: MapPin,
+    clearDesc: "Location matches registered work zone",
+    flaggedDesc: "GPS or IP geolocation mismatch detected",
+  },
+  activity_verification: {
+    label: "Activity Verification",
+    icon: Smartphone,
+    clearDesc: "App was active during the event window",
+    flaggedDesc: "No app session during the disruption event",
+  },
+  "cross-worker_zone_check": {
+    label: "Cross-Worker Zone Check",
+    icon: Users,
+    clearDesc: "Zone-wide disruption confirmed by other workers",
+    flaggedDesc: "Isolated individual claim — no zone-wide event",
+  },
+  "duplicate_&_frequency": {
+    label: "Duplicate & Frequency",
+    icon: Copy,
+    clearDesc: "No repeat claim and normal claiming rate",
+    flaggedDesc: "Duplicate or abnormal claim frequency detected",
+  },
+  behavioral_analysis: {
+    label: "Behavioral Analysis",
+    icon: Brain,
+    clearDesc: "Normal worker activity patterns",
+    flaggedDesc: "Suspicious behavioral patterns detected",
+  },
+  /* ── Legacy / fallback keys ── */
   gps_in_registered_zone: {
     label: "GPS Verification",
     icon: MapPin,
@@ -182,7 +214,7 @@ export default function FraudBreakdown({ assessment, compact = false }: FraudBre
           <div className="flex items-center gap-3">
             <Shield className={`w-5 h-5 ${overallColor}`} strokeWidth={1.5} />
             <div>
-              <h3 className="text-base font-bold text-foreground">6-Layer Fraud Analysis</h3>
+              <h3 className="text-base font-bold text-foreground">5-Layer Fraud Analysis</h3>
               <p className="text-xs text-muted-foreground">Real-time signal correlation</p>
             </div>
           </div>

@@ -33,11 +33,13 @@ from dataclasses import dataclass, field
 
 # ── Layer weights (sum to 1.0) ─────────────────────────────────────────────
 LAYER_WEIGHTS = {
-    "gps_consistency": 0.25,
-    "claim_frequency": 0.25,
-    "location_disruption": 0.20,
-    "velocity_check": 0.15,
-    "behavioral": 0.15,
+    "gps_consistency": 0.18,
+    "claim_frequency": 0.18,
+    "location_disruption": 0.16,
+    "velocity_check": 0.14,
+    "behavioral": 0.12,
+    "historical_weather": 0.12,
+    "gps_spoofing_advanced": 0.10,
 }
 
 # ── Thresholds ─────────────────────────────────────────────────────────────
@@ -47,6 +49,9 @@ SUSPICIOUS_DAILY_CLAIMS = 2
 GPS_ZONE_MAX_DISTANCE_KM = 15.0   # Worker must be within 15km of zone center
 IMPOSSIBLE_SPEED_KMH = 200.0       # Faster than this = spoofing
 MIN_SESSION_DURATION_MINUTES = 5.0  # Claims within 5 min of login are suspicious
+GPS_JITTER_THRESHOLD_M = 3.0       # GPS readings under 3m apart = synthetic
+GPS_ALTITUDE_MAX_CHANGE_M = 50.0   # Max altitude change between readings
+HISTORICAL_WEATHER_MATCH_THRESHOLD = 0.6  # Min correlation for weather claim validity
 
 
 @dataclass
@@ -502,8 +507,239 @@ def check_behavioral_patterns(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Aggregator: Combine all 5 layers into final assessment
+# Aggregator: Combine all 7 layers into final assessment
 # ═══════════════════════════════════════════════════════════════════════════
+
+# ── Layer 6: Historical Weather Cross-Reference ───────────────────────────
+def check_historical_weather(
+    claimed_trigger_type: str,
+    current_weather: dict | None = None,
+    historical_events: list[dict] | None = None,
+    claimed_zone_id: str = "",
+) -> FraudSignal:
+    """
+    Cross-check: Does the claimed weather event match historical patterns?
+    Catches fake weather claims by comparing against IMD/OpenWeather history.
+    - If worker claims heavy_rain but historical data shows zero rain in zone → fraud
+    - If worker claims extreme_heat in a cool-weather zone/season → fraud
+    - Pattern: workers who always claim during events that don't match zone history
+    """
+    if not claimed_trigger_type or claimed_trigger_type == "none":
+        return FraudSignal(
+            layer="historical_weather",
+            score=0.0,
+            confidence=0.5,
+            reason="No weather trigger claimed — skipped",
+            details={"checked": False},
+        )
+
+    if current_weather is None:
+        return FraudSignal(
+            layer="historical_weather",
+            score=0.3,
+            confidence=0.4,
+            reason="No current weather data available for cross-reference",
+            details={"checked": False},
+        )
+
+    rainfall = float(current_weather.get("rainfall", 0))
+    temperature = float(current_weather.get("temperature", 0))
+    humidity = float(current_weather.get("humidity", 0))
+    wind_speed = float(current_weather.get("wind_speed", 0))
+
+    score = 0.0
+    reasons = []
+
+    # Check 1: Heavy rain claim but no rain in current weather data
+    if claimed_trigger_type in {"heavy_rain", "urban_flooding"}:
+        if rainfall < 2.0:
+            score += 0.6
+            reasons.append(f"Claims {claimed_trigger_type} but rainfall only {rainfall:.1f}mm")
+        elif rainfall < 10.0:
+            score += 0.2
+            reasons.append(f"Claims {claimed_trigger_type} with moderate rain ({rainfall:.1f}mm)")
+
+    # Check 2: Extreme heat claim but temperature is normal
+    if claimed_trigger_type == "extreme_heat":
+        if temperature < 35.0:
+            score += 0.7
+            reasons.append(f"Claims extreme heat but temp is {temperature:.1f}°C")
+        elif temperature < 40.0:
+            score += 0.2
+            reasons.append(f"Claims extreme heat with warm ({temperature:.1f}°C) but not extreme")
+
+    # Check 3: Cyclone claim but calm conditions
+    if claimed_trigger_type in {"cyclone_alert", "imd_cyclone"}:
+        if wind_speed < 20.0 and rainfall < 5.0:
+            score += 0.7
+            reasons.append(f"Claims cyclone but wind={wind_speed:.1f}km/h, rain={rainfall:.1f}mm")
+
+    # Check 4: Poor visibility claim but clear weather
+    if claimed_trigger_type == "poor_visibility":
+        if humidity < 60 and rainfall < 1.0:
+            score += 0.5
+            reasons.append(f"Claims poor visibility but humidity={humidity:.0f}%, clear conditions")
+
+    # Check 5: Historical pattern — if we have past events, check seasonal consistency
+    if historical_events:
+        weather_trigger_count = sum(
+            1 for e in historical_events
+            if e.get("trigger_type") == claimed_trigger_type
+        )
+        total_events = len(historical_events)
+        if total_events > 5 and weather_trigger_count == 0:
+            score += 0.3
+            reasons.append(f"No historical {claimed_trigger_type} events in zone ({total_events} records)")
+
+    score = min(score, 1.0)
+    reason = "; ".join(reasons) if reasons else f"Weather data consistent with {claimed_trigger_type} claim"
+
+    return FraudSignal(
+        layer="historical_weather",
+        score=score,
+        confidence=0.8 if current_weather else 0.4,
+        reason=reason,
+        details={
+            "checked": True,
+            "claimed_trigger": claimed_trigger_type,
+            "actual_rainfall": rainfall,
+            "actual_temperature": temperature,
+            "actual_wind": wind_speed,
+            "historical_match": score < 0.3,
+        },
+    )
+
+
+# ── Layer 7: Advanced GPS Spoofing Detection ──────────────────────────────
+def check_gps_spoofing_advanced(
+    gps_readings: list[GPSPoint] | None = None,
+    claimed_zone_id: str = "",
+    device_info: dict | None = None,
+) -> FraudSignal:
+    """
+    Advanced GPS spoofing detection beyond simple velocity checks:
+    1. GPS jitter analysis: Real GPS has natural jitter (5-15m). Spoofed coordinates
+       are often perfectly round or have zero jitter.
+    2. Coordinate precision: Real GPS gives ~7 decimal places with noise. Spoofed
+       coordinates are often round numbers (e.g., 12.9350, 77.6200).
+    3. Altitude consistency: Real GPS includes altitude variations. Spoofed doesn't.
+    4. Mock location API detection: Device-level flag (Android).
+    5. Timing regularity: Real GPS updates have natural timing jitter. Spoofed
+       updates are often perfectly regular (every exactly N seconds).
+    """
+    if not gps_readings or len(gps_readings) < 2:
+        return FraudSignal(
+            layer="gps_spoofing_advanced",
+            score=0.15,
+            confidence=0.3,
+            reason="Insufficient GPS readings for advanced spoofing analysis",
+            details={"readings_count": len(gps_readings) if gps_readings else 0},
+        )
+
+    score = 0.0
+    reasons = []
+    checks = {}
+
+    # Check 1: Coordinate precision — real GPS has noise, spoofed is too clean
+    round_count = 0
+    for gps in gps_readings:
+        lat_decimals = len(str(gps.lat).split(".")[-1]) if "." in str(gps.lat) else 0
+        lon_decimals = len(str(gps.lon).split(".")[-1]) if "." in str(gps.lon) else 0
+        if lat_decimals <= 2 or lon_decimals <= 2:
+            round_count += 1
+    if round_count > len(gps_readings) * 0.5:
+        score += 0.4
+        reasons.append(f"{round_count}/{len(gps_readings)} readings have suspiciously round coordinates")
+        checks["round_coordinates"] = True
+    else:
+        checks["round_coordinates"] = False
+
+    # Check 2: Zero jitter — real GPS always has some movement noise
+    if len(gps_readings) >= 3:
+        jitter_distances = []
+        for i in range(1, len(gps_readings)):
+            d = _haversine_km(
+                gps_readings[i - 1].lat, gps_readings[i - 1].lon,
+                gps_readings[i].lat, gps_readings[i].lon,
+            ) * 1000  # Convert to meters
+            jitter_distances.append(d)
+
+        avg_jitter = sum(jitter_distances) / len(jitter_distances)
+        if avg_jitter < GPS_JITTER_THRESHOLD_M and all(d < GPS_JITTER_THRESHOLD_M for d in jitter_distances):
+            score += 0.5
+            reasons.append(f"Zero GPS jitter ({avg_jitter:.1f}m avg) — synthetic coordinates likely")
+            checks["zero_jitter"] = True
+        else:
+            checks["zero_jitter"] = False
+        checks["avg_jitter_m"] = round(avg_jitter, 2)
+    else:
+        checks["zero_jitter"] = False
+
+    # Check 3: Timing regularity — real GPS has irregular update intervals
+    timed_readings = [g for g in gps_readings if g.timestamp is not None]
+    if len(timed_readings) >= 3:
+        intervals = []
+        for i in range(1, len(timed_readings)):
+            dt = abs((timed_readings[i].timestamp - timed_readings[i - 1].timestamp).total_seconds())
+            intervals.append(dt)
+
+        if intervals:
+            avg_interval = sum(intervals) / len(intervals)
+            if avg_interval > 0:
+                variance = sum((i - avg_interval) ** 2 for i in intervals) / len(intervals)
+                cv = (variance ** 0.5) / avg_interval if avg_interval > 0 else 0
+                if cv < 0.02 and len(intervals) >= 3:
+                    score += 0.3
+                    reasons.append(f"GPS update timing too regular (CV={cv:.3f}) — automated spoofing")
+                    checks["timing_regular"] = True
+                else:
+                    checks["timing_regular"] = False
+                checks["timing_cv"] = round(cv, 4)
+    else:
+        checks["timing_regular"] = False
+
+    # Check 4: Mock location flag from device info
+    if device_info:
+        if device_info.get("mock_location_enabled"):
+            score += 0.6
+            reasons.append("Device mock location API detected as enabled")
+            checks["mock_location"] = True
+        else:
+            checks["mock_location"] = False
+
+        if device_info.get("is_emulator"):
+            score += 0.4
+            reasons.append("Running on emulator — not a real device")
+            checks["emulator"] = True
+        else:
+            checks["emulator"] = False
+
+    # Check 5: All readings at exact same coordinates (copy-paste)
+    unique_coords = set((round(g.lat, 6), round(g.lon, 6)) for g in gps_readings)
+    if len(unique_coords) == 1 and len(gps_readings) > 3:
+        score += 0.5
+        reasons.append(f"All {len(gps_readings)} readings at identical coordinates")
+        checks["identical_coordinates"] = True
+    else:
+        checks["identical_coordinates"] = False
+        checks["unique_positions"] = len(unique_coords)
+
+    score = min(score, 1.0)
+    reason = "; ".join(reasons) if reasons else "GPS readings appear genuine"
+
+    return FraudSignal(
+        layer="gps_spoofing_advanced",
+        score=score,
+        confidence=0.85 if len(gps_readings) >= 5 else 0.6,
+        reason=reason,
+        details={
+            "readings_analyzed": len(gps_readings),
+            "checks": checks,
+            "spoofing_indicators": len(reasons),
+        },
+    )
+
+
 def assess_fraud(
     *,
     # Layer 1: GPS
@@ -522,9 +758,16 @@ def assess_fraud(
     claim_timestamp: datetime | None = None,
     active_hours_today: float = 0.0,
     is_logged_in: bool = True,
+    # Layer 6: Historical weather cross-reference
+    claimed_trigger_type: str = "",
+    current_weather: dict | None = None,
+    historical_events: list[dict] | None = None,
+    # Layer 7: Advanced GPS spoofing
+    gps_readings: list[GPSPoint] | None = None,
+    device_info: dict | None = None,
 ) -> FraudAssessment:
     """
-    Run all 5 fraud detection layers and produce a weighted aggregate score.
+    Run all 7 fraud detection layers and produce a weighted aggregate score.
 
     Returns FraudAssessment with:
     - overall_score: 0.0 (clean) to 1.0 (fraudulent)
@@ -545,6 +788,17 @@ def assess_fraud(
         check_behavioral_patterns(
             login_timestamp, claim_timestamp,
             active_hours_today, is_logged_in, history,
+        ),
+        check_historical_weather(
+            claimed_trigger_type=claimed_trigger_type,
+            current_weather=current_weather,
+            historical_events=historical_events,
+            claimed_zone_id=claimed_zone_id,
+        ),
+        check_gps_spoofing_advanced(
+            gps_readings=gps_readings or ([worker_gps, previous_gps] if worker_gps and previous_gps else None),
+            claimed_zone_id=claimed_zone_id,
+            device_info=device_info,
         ),
     ]
 

@@ -134,6 +134,23 @@ except ImportError:
     from vpn_detection import check_vpn, VPNCheckResult
 
 try:
+    from .payment_gateway import (
+        process_payout,
+        get_transaction,
+        get_worker_transactions,
+        get_all_transactions,
+        get_transaction_stats,
+    )
+except ImportError:
+    from payment_gateway import (
+        process_payout,
+        get_transaction,
+        get_worker_transactions,
+        get_all_transactions,
+        get_transaction_stats,
+    )
+
+try:
     from .models import (
         TriggerDecisionResponse,
         WeatherRiskResponse,
@@ -600,6 +617,7 @@ class ClaimEvaluateRequest(BaseModel):
         ]
     ] = Field(default_factory=list)
     simulate_vpn: bool = False
+    fraud_test_overrides: dict | None = Field(default=None, description="Override fraud signals for fraud demo testing. Keys: force_duplicate, force_frequency, force_gps_fail, force_app_inactive")
 
 
 class AutoTriggerSimulationRequest(BaseModel):
@@ -820,7 +838,7 @@ def _apply_demo_scenarios(
     demand: dict[str, float],
     zone_shutdown: bool,
     platform_degraded: bool,
-) -> tuple[dict[str, float | bool], dict[str, float], bool, bool, bool, str | None, bool, str | None]:
+) -> tuple[dict[str, float | bool], dict[str, float], bool, bool, bool, str | None, bool, str | None, set[str]]:
     next_weather = dict(weather)
     next_demand = dict(demand)
     next_zone_shutdown = zone_shutdown
@@ -829,6 +847,7 @@ def _apply_demo_scenarios(
     next_imd_alert_level: str | None = None
     next_external_event_active = False
     next_external_event_name: str | None = None
+    active_external_events: set[str] = set()
 
     for scenario in scenarios:
         (
@@ -853,6 +872,7 @@ def _apply_demo_scenarios(
         next_external_event_active = next_external_event_active or external_event_active
         if external_event_name is not None:
             next_external_event_name = external_event_name
+            active_external_events.add(external_event_name)
 
     return (
         next_weather,
@@ -863,6 +883,7 @@ def _apply_demo_scenarios(
         next_imd_alert_level,
         next_external_event_active,
         next_external_event_name,
+        active_external_events,
     )
 
 
@@ -959,6 +980,7 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
 
     applied_scenario: str | None = None
     applied_scenarios: list[str] = []
+    active_external_events: set[str] = set()
     scenario_bundle = [scenario for scenario in payload.demo_scenarios if scenario != "none"]
     if payload.demo_mode and payload.demo_scenario != "none":
         scenario_bundle = [*scenario_bundle, payload.demo_scenario]
@@ -972,6 +994,7 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             simulated_imd_alert_level,
             external_event_active,
             external_event_name,
+            active_external_events,
         ) = _apply_demo_scenarios(
             scenarios=list(dict.fromkeys(scenario_bundle)),
             weather=weather,
@@ -1107,11 +1130,38 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             "severity_multiplier": _claim_severity_multiplier("platform_outage"),
         },
         {
-            "name": external_event_name or "external_event",
+            "name": "curfew",
             "category": "external",
             "source": "mock",
-            "fired": external_event_active,
-            "value": 1.0 if external_event_active else 0.0,
+            "fired": "curfew" in active_external_events,
+            "value": 1.0 if "curfew" in active_external_events else 0.0,
+            "threshold": 1.0,
+            "severity_multiplier": 1.35,
+        },
+        {
+            "name": "public_health_emergency",
+            "category": "external",
+            "source": "mock",
+            "fired": "public_health_emergency" in active_external_events,
+            "value": 1.0 if "public_health_emergency" in active_external_events else 0.0,
+            "threshold": 1.0,
+            "severity_multiplier": 1.35,
+        },
+        {
+            "name": "civil_disturbance",
+            "category": "external",
+            "source": "mock",
+            "fired": "civil_disturbance" in active_external_events,
+            "value": 1.0 if "civil_disturbance" in active_external_events else 0.0,
+            "threshold": 1.0,
+            "severity_multiplier": 1.35,
+        },
+        {
+            "name": "infrastructure_failure",
+            "category": "external",
+            "source": "mock",
+            "fired": "infrastructure_failure" in active_external_events,
+            "value": 1.0 if "infrastructure_failure" in active_external_events else 0.0,
             "threshold": 1.0,
             "severity_multiplier": 1.35,
         },
@@ -1133,14 +1183,23 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
         fraud_response: TriggerFraudResponse | None = None
         payout_response: TriggerPayoutResponse | None = None
 
+        # When fraud_test_overrides is set, use explicit overrides instead of
+        # accumulated in-memory state so the fraud demo is deterministic.
+        fto = payload.fraud_test_overrides
+        eff_duplicate = fto.get("force_duplicate", False) if fto else duplicate_event
+        eff_frequency = fto.get("force_frequency", 0.0) if fto else claim_frequency_ratio
+        eff_gps = (not fto.get("force_gps_fail", False)) if fto else gps_in_zone
+        eff_app = (not fto.get("force_app_inactive", False)) if fto else app_active
+        eff_vpn = fto.get("force_vpn", False) if fto else vpn_detected
+
         if fired:
             fraud_score, breakdown = _trigger_fraud_breakdown(
-                gps_in_zone=gps_in_zone,
-                app_active=app_active,
+                gps_in_zone=eff_gps,
+                app_active=eff_app,
                 zone_worker_ratio=zone_ratio,
-                duplicate_claim=duplicate_event,
-                claim_frequency_ratio=claim_frequency_ratio,
-                vpn_detected=vpn_detected,
+                duplicate_claim=eff_duplicate,
+                claim_frequency_ratio=eff_frequency if isinstance(eff_frequency, float) else (1.0 if eff_frequency else 0.0),
+                vpn_detected=eff_vpn,
             )
             fraud_decision = _format_fraud_decision(fraud_score)
             fraud_response = TriggerFraudResponse(
@@ -1156,6 +1215,8 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
 
             raw_amount = payload.hours_lost * hourly_rate * severity_multiplier
             final_amount = min(raw_amount, daily_cap)
+            _hrs = int(payload.hours_lost) if payload.hours_lost == int(payload.hours_lost) else payload.hours_lost
+            _fa = int(final_amount) if final_amount == int(final_amount) else round(final_amount, 2)
             payout_response = TriggerPayoutResponse(
                 hours_lost=payload.hours_lost,
                 hourly_rate=hourly_rate,
@@ -1163,7 +1224,7 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
                 daily_cap=daily_cap,
                 raw_amount=round(raw_amount, 2),
                 final_amount=round(final_amount, 2),
-                formula=f"{payload.hours_lost}h × ₹{int(hourly_rate)} × {severity_multiplier} = ₹{round(final_amount, 2)}",
+                formula=f"{_hrs}h × ₹{int(hourly_rate)} × {severity_multiplier} = ₹{_fa}",
             )
 
             highest_fraud = max(highest_fraud, fraud_score)
@@ -1191,15 +1252,17 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
     else:
         if any(not item.eligibility.policy_active or not item.eligibility.premium_paid or not item.eligibility.gps_in_zone for item in fired_triggers):
             claim_status = "hold-for-review"
-        elif highest_fraud < 0.3:
-            claim_status = "auto-approve"
-        elif highest_fraud <= 0.7:
+        elif highest_fraud > 0.9:
+            claim_status = "auto-reject"
+        elif highest_fraud > 0.7:
+            claim_status = "hold-for-review"
+        elif highest_fraud >= 0.3:
             claim_status = "approve-with-flag"
         else:
-            claim_status = "hold-for-review"
+            claim_status = "auto-approve"
 
         summed_payout = round(sum(item.payout.final_amount for item in fired_triggers if item.payout), 2)
-        payout_amount = 0.0 if claim_status == "hold-for-review" else round(min(summed_payout, daily_cap), 2)
+        payout_amount = 0.0 if claim_status in ("hold-for-review", "auto-reject") else round(min(summed_payout, daily_cap), 2)
         explanation = (
             f"{len(fired_triggers)} trigger(s) fired. Fraud score maxed at {round(highest_fraud, 3)} and claim was {claim_status}."
         )
@@ -1366,26 +1429,72 @@ def _trigger_fraud_breakdown(
     claim_frequency_ratio: float,
     vpn_detected: bool = False,
 ) -> tuple[float, list[dict[str, float]]]:
-    rule_values = {
-        "gps_in_registered_zone": 0.0 if gps_in_zone else 1.0,
-        "app_active_during_event": 0.0 if app_active else 1.0,
-        "zone_worker_ratio": 0.0 if zone_worker_ratio > 0.4 else 1.0,
-        "no_duplicate_claim": 1.0 if duplicate_claim else 0.0,
-        "claim_frequency_vs_zone_average": max(0.0, min(1.0, claim_frequency_ratio)),
-        "vpn_proxy_detection": 1.0 if vpn_detected else 0.0,
-    }
-    weighted_rules = [
-        ("GPS in registered zone", 0.22, rule_values["gps_in_registered_zone"]),
-        ("App active during event", 0.18, rule_values["app_active_during_event"]),
-        ("Zone worker ratio", 0.20, rule_values["zone_worker_ratio"]),
-        ("No duplicate claim", 0.12, rule_values["no_duplicate_claim"]),
-        ("Claim frequency vs zone average", 0.12, rule_values["claim_frequency_vs_zone_average"]),
-        ("VPN / Proxy detection", 0.16, rule_values["vpn_proxy_detection"]),
+    """5-layer weighted-signal fraud engine per README §6.
+
+    Layers and weights (sum to 1.0):
+      1. GPS Validation        (0.25) — physical GPS + IP geolocation consistency
+      2. Activity Verification  (0.20) — app session during trigger window
+      3. Cross-Worker Zone Check(0.25) — zone disruption ratio
+      4. Duplicate & Frequency  (0.15) — repeat claims + frequency anomaly
+      5. Behavioral Analysis    (0.15) — cross-signal behavioral flags
+    """
+
+    # ── Layer 1: GPS Validation (0.25) ──────────────────────────────
+    # Sub-checks: GPS in registered zone + IP geolocation vs GPS consistency
+    gps_score = 0.0
+    if not gps_in_zone:
+        gps_score = 1.0                    # GPS outside registered zone
+    if vpn_detected:
+        gps_score = max(gps_score, 0.8)    # IP mismatch — VPN/proxy detected
+
+    # ── Layer 2: Activity Verification (0.20) ───────────────────────
+    activity_score = 0.0 if app_active else 1.0
+
+    # ── Layer 3: Cross-Worker Zone Check (0.25) ─────────────────────
+    # ratio >= 0.4 → zone-wide event (legitimate)  → 0.0
+    # ratio <= 0.2 → isolated individual (suspicious) → 1.0
+    # between     → linear gradient
+    if zone_worker_ratio >= 0.4:
+        zone_score = 0.0
+    elif zone_worker_ratio <= 0.2:
+        zone_score = 1.0
+    else:
+        zone_score = round(1.0 - (zone_worker_ratio - 0.2) / 0.2, 3)
+
+    # ── Layer 4: Duplicate & Frequency Check (0.15) ─────────────────
+    if duplicate_claim:
+        dup_freq_score = 1.0
+    else:
+        dup_freq_score = max(0.0, min(1.0, claim_frequency_ratio))
+
+    # ── Layer 5: Behavioral Pattern Analysis (0.15) ─────────────────
+    # Aggregates cross-signal behavioural anomalies — each fraud vector
+    # leaves a secondary behavioural footprint.
+    behavioral_sub: list[float] = []
+    if vpn_detected:
+        behavioral_sub.append(1.0)        # datacenter IP is definitively abnormal
+    if duplicate_claim:
+        behavioral_sub.append(1.0)        # repeat-claim gaming pattern
+    if not gps_in_zone:
+        behavioral_sub.append(0.7)        # location mismatch
+    if not app_active:
+        behavioral_sub.append(0.7)        # no session during event
+    if claim_frequency_ratio > 0.5:
+        behavioral_sub.append(min(1.0, claim_frequency_ratio))
+    behavioral_score = max(behavioral_sub) if behavioral_sub else 0.0
+
+    # ── Weighted scoring ────────────────────────────────────────────
+    layers = [
+        ("GPS Verification",        0.25, gps_score),
+        ("Activity Verification",   0.20, activity_score),
+        ("Cross-Worker Zone Check",  0.25, zone_score),
+        ("Duplicate & Frequency",   0.15, dup_freq_score),
+        ("Behavioral Analysis",     0.15, behavioral_score),
     ]
 
     score = 0.0
     breakdown: list[dict[str, float]] = []
-    for label, weight, value in weighted_rules:
+    for label, weight, value in layers:
         contribution = round(weight * value, 3)
         score += contribution
         breakdown.append(
@@ -1418,11 +1527,13 @@ def _severity_for_trigger(trigger_name: str, *, demand_drop_pct: float | None = 
 
 
 def _format_fraud_decision(score: float) -> str:
-    if score < 0.3:
-        return "auto-approve"
-    if score <= 0.7:
+    if score > 0.9:
+        return "auto-reject"
+    if score > 0.7:
+        return "hold-for-review"
+    if score >= 0.3:
         return "approve-with-flag"
-    return "hold-for-review"
+    return "auto-approve"
 
 
 def _default_zone_id_for_city(city: str) -> str:
@@ -2686,4 +2797,547 @@ def dashboard(user_id: int):
         "total_payouts": total_payouts,
         "recent_claims": recent_claims,
         "last_trigger_status": user.get("last_trigger_status", False),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 3: Instant Payout System (Simulated)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class PayoutProcessRequest(BaseModel):
+    worker_id: int = Field(..., ge=1)
+    claim_id: str = Field(..., min_length=1)
+    amount: float = Field(..., gt=0)
+    gateway: Literal["razorpay", "upi_direct", "stripe"] = "razorpay"
+    upi_id: str = Field(default="worker@upi")
+
+
+@app.post("/api/payout/process")
+def process_payout_endpoint(payload: PayoutProcessRequest):
+    """Process instant payout through simulated payment gateway."""
+    user = users.get(payload.worker_id)
+    worker_name = user.get("name", "Worker") if user else "Worker"
+
+    txn = process_payout(
+        worker_id=payload.worker_id,
+        claim_id=payload.claim_id,
+        amount=payload.amount,
+        gateway=payload.gateway,
+        upi_id=payload.upi_id,
+        worker_name=worker_name,
+    )
+    return txn.to_dict()
+
+
+@app.get("/api/payout/status/{txn_id}")
+def get_payout_status(txn_id: str):
+    """Get payout transaction status."""
+    txn = get_transaction(txn_id)
+    if txn is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return txn.to_dict()
+
+
+@app.get("/api/payout/transactions/{worker_id}")
+def get_worker_payouts(worker_id: int):
+    """Get all payout transactions for a worker."""
+    txns = get_worker_transactions(worker_id)
+    return {
+        "worker_id": worker_id,
+        "transactions": [t.to_dict() for t in txns],
+        "total_disbursed": round(sum(t.amount for t in txns if t.status.value == "completed"), 2),
+    }
+
+
+@app.get("/api/payout/stats")
+def get_payout_stats():
+    """Aggregate payout statistics across all gateways."""
+    return get_transaction_stats()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 3: Worker Earnings Summary (Intelligent Dashboard)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/worker/earnings-summary/{user_id}")
+def worker_earnings_summary(user_id: int):
+    """Worker intelligent dashboard data: earnings protected, coverage stats."""
+    user = users.get(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+    month_ago = now - timedelta(days=30)
+
+    user_claims_all = [c for c in claims if c["user_id"] == user_id]
+    claims_this_week = [c for c in user_claims_all if c["timestamp"] >= week_ago]
+    claims_this_month = [c for c in user_claims_all if c["timestamp"] >= month_ago]
+
+    total_earned = sum(c.get("payout_amount", 0) for c in user_claims_all)
+    earned_this_week = sum(c.get("payout_amount", 0) for c in claims_this_week)
+    earned_this_month = sum(c.get("payout_amount", 0) for c in claims_this_month)
+
+    approved_claims = [c for c in user_claims_all if c.get("status") in {"approved", "auto-approve", "approve-with-flag"}]
+    rejected_claims = [c for c in user_claims_all if c.get("status") in {"hold-for-review", "under_review"}]
+
+    policy = policies.get(user_id)
+    plan_name = user.get("selected_plan", "Standard")
+    plan_details = plans.get(plan_name.replace(" Shield", "").strip().capitalize(), plans["Standard"])
+    weekly_premium = plan_details.get("weekly_premium", 69)
+
+    # Coverage utilization
+    total_premium_paid = weekly_premium * max(1, len(claims_this_month) // 7 + 1)
+    return_ratio = round(total_earned / total_premium_paid, 2) if total_premium_paid > 0 else 0.0
+
+    # Build coverage timeline (last 4 weeks)
+    coverage_weeks = []
+    for w in range(4):
+        start = now - timedelta(days=7 * (w + 1))
+        end = now - timedelta(days=7 * w)
+        week_claims = [c for c in user_claims_all if start <= c["timestamp"] < end]
+        week_payout = sum(c.get("payout_amount", 0) for c in week_claims)
+        coverage_weeks.append({
+            "week": f"W{4 - w}",
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "claims": len(week_claims),
+            "payout": round(week_payout, 2),
+            "premium": weekly_premium,
+        })
+    coverage_weeks.reverse()
+
+    # Trust score based on fraud history
+    avg_fraud = sum(c.get("fraud_score", 0) for c in user_claims_all) / max(len(user_claims_all), 1)
+    trust_score = round(max(0, min(100, (1.0 - avg_fraud) * 100)), 0)
+
+    # Payout transactions
+    worker_txns = get_worker_transactions(user_id)
+
+    return {
+        "user_id": user_id,
+        "plan": plan_name,
+        "weekly_premium": weekly_premium,
+        "coverage_status": policy.get("status", "active") if policy else "active",
+        "earnings": {
+            "total": round(total_earned, 2),
+            "this_week": round(earned_this_week, 2),
+            "this_month": round(earned_this_month, 2),
+        },
+        "claims_summary": {
+            "total": len(user_claims_all),
+            "approved": len(approved_claims),
+            "rejected": len(rejected_claims),
+            "this_week": len(claims_this_week),
+            "this_month": len(claims_this_month),
+        },
+        "return_ratio": return_ratio,
+        "trust_score": trust_score,
+        "coverage_weeks": coverage_weeks,
+        "recent_payouts": [t.to_dict() for t in worker_txns[-5:]],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 3: Admin Analytics (Intelligent Dashboard)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/admin/analytics")
+async def admin_analytics():
+    """Admin intelligent dashboard: loss ratios, predictive analytics."""
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+    month_ago = now - timedelta(days=30)
+
+    all_claims = list(claims)
+    claims_this_week = [c for c in all_claims if c["timestamp"] >= week_ago]
+    claims_this_month = [c for c in all_claims if c["timestamp"] >= month_ago]
+
+    total_payouts = sum(c.get("payout_amount", 0) for c in all_claims)
+    weekly_payouts = sum(c.get("payout_amount", 0) for c in claims_this_week)
+    monthly_payouts = sum(c.get("payout_amount", 0) for c in claims_this_month)
+
+    # Premium revenue estimation
+    active_workers = len(users)
+    avg_premium = 69  # Standard tier average
+    weekly_premium_revenue = active_workers * avg_premium
+    monthly_premium_revenue = weekly_premium_revenue * 4
+
+    # Loss ratio = payouts / premium revenue
+    weekly_loss_ratio = round(weekly_payouts / max(weekly_premium_revenue, 1), 3)
+    monthly_loss_ratio = round(monthly_payouts / max(monthly_premium_revenue, 1), 3)
+
+    # Fraud stats
+    fraud_scores = [c.get("fraud_score", 0) for c in all_claims]
+    high_fraud = len([s for s in fraud_scores if s > 0.6])
+    medium_fraud = len([s for s in fraud_scores if 0.3 <= s <= 0.6])
+    low_fraud = len([s for s in fraud_scores if s < 0.3])
+    avg_fraud = round(sum(fraud_scores) / max(len(fraud_scores), 1), 3)
+
+    # Claims by trigger type
+    trigger_breakdown: dict[str, dict] = {}
+    for c in all_claims:
+        trigger = c.get("trigger_type") or "no_trigger"
+        triggers = [t.strip() for t in trigger.split(",") if t.strip()]
+        for t in triggers:
+            if t not in trigger_breakdown:
+                trigger_breakdown[t] = {"count": 0, "total_payout": 0.0}
+            trigger_breakdown[t]["count"] += 1
+            trigger_breakdown[t]["total_payout"] += c.get("payout_amount", 0) / max(len(triggers), 1)
+
+    # Claims by status
+    status_breakdown: dict[str, int] = {}
+    for c in all_claims:
+        status = c.get("status", "unknown")
+        status_breakdown[status] = status_breakdown.get(status, 0) + 1
+
+    # Payout gateway stats
+    payout_stats = get_transaction_stats()
+
+    # Worker segments
+    worker_segments = {"gold": 0, "silver": 0, "standard": 0, "review": 0}
+    for uid, u in users.items():
+        user_c = [c for c in all_claims if c["user_id"] == uid]
+        if not user_c:
+            worker_segments["standard"] += 1
+            continue
+        avg_f = sum(c.get("fraud_score", 0) for c in user_c) / len(user_c)
+        trust = (1.0 - avg_f) * 100
+        if trust >= 80:
+            worker_segments["gold"] += 1
+        elif trust >= 60:
+            worker_segments["silver"] += 1
+        elif trust >= 40:
+            worker_segments["standard"] += 1
+        else:
+            worker_segments["review"] += 1
+
+    # Recent claims timeline (last 7 days, by day)
+    daily_claims: dict[str, dict] = {}
+    for d in range(7):
+        day = (now - timedelta(days=d)).date().isoformat()
+        day_claims = [c for c in all_claims if c["timestamp"].date().isoformat() == day]
+        daily_claims[day] = {
+            "claims": len(day_claims),
+            "payouts": round(sum(c.get("payout_amount", 0) for c in day_claims), 2),
+            "avg_fraud": round(sum(c.get("fraud_score", 0) for c in day_claims) / max(len(day_claims), 1), 3),
+        }
+
+    return {
+        "summary": {
+            "total_workers": active_workers,
+            "total_claims": len(all_claims),
+            "total_payouts": round(total_payouts, 2),
+            "weekly_premium_revenue": weekly_premium_revenue,
+            "monthly_premium_revenue": monthly_premium_revenue,
+        },
+        "loss_ratios": {
+            "weekly": weekly_loss_ratio,
+            "monthly": monthly_loss_ratio,
+            "overall": round(total_payouts / max(monthly_premium_revenue, 1), 3),
+        },
+        "fraud_stats": {
+            "avg_score": avg_fraud,
+            "high_risk": high_fraud,
+            "medium_risk": medium_fraud,
+            "low_risk": low_fraud,
+        },
+        "trigger_breakdown": trigger_breakdown,
+        "status_breakdown": status_breakdown,
+        "worker_segments": worker_segments,
+        "daily_timeline": daily_claims,
+        "payout_gateway_stats": payout_stats,
+    }
+
+
+@app.get("/api/admin/predictive")
+async def admin_predictive_analytics():
+    """Predictive analytics: next week's likely weather/disruption claims."""
+    now = datetime.now(timezone.utc)
+    month = now.month  # 1-12
+
+    # Seasonal multiplier: monsoon Jun-Sep peaks, winter Dec-Feb low
+    seasonal_mult = {1: 0.6, 2: 0.5, 3: 0.7, 4: 0.8, 5: 0.9, 6: 1.4,
+                     7: 1.6, 8: 1.5, 9: 1.3, 10: 1.1, 11: 0.9, 12: 0.7}
+    season_factor = seasonal_mult.get(month, 1.0)
+
+    # City-specific base claim rates (weekly) reflecting historical patterns
+    city_base_claims = {
+        "Mumbai": 18, "Chennai": 14, "Kolkata": 12, "Bengaluru": 10,
+        "Kochi": 11, "Hyderabad": 8, "Delhi": 9, "Coimbatore": 6,
+        "Pune": 7, "Jaipur": 5,
+    }
+    city_avg_payout = {
+        "Mumbai": 620, "Chennai": 540, "Kolkata": 480, "Bengaluru": 520,
+        "Kochi": 490, "Hyderabad": 460, "Delhi": 510, "Coimbatore": 420,
+        "Pune": 450, "Jaipur": 380,
+    }
+
+    cities = ["Mumbai", "Chennai", "Bengaluru", "Delhi", "Kolkata", "Hyderabad", "Kochi", "Coimbatore"]
+    city_forecasts = []
+
+    for city_name in cities:
+        payload = await fetch_openweather_payload(city_name)
+        if payload is None:
+            continue
+
+        response = build_city_weather_response(city_name, payload)
+        risk_score = response["weather_risk_score"]
+        trigger_prob = response["trigger_probability"]
+        trigger_type = response["trigger_type"]
+
+        # Base claims from historical city pattern + seasonal adjustment
+        base = city_base_claims.get(city_name, 8)
+        base_weekly = max(2, int(base * season_factor * random.uniform(0.85, 1.15)))
+
+        # Weather-amplified claims: boost if active triggers detected
+        weather_boost = 0
+        if trigger_prob > 0.3:
+            weather_boost = int(trigger_prob * base * 0.6 * random.uniform(0.8, 1.3))
+
+        predicted_claims = base_weekly + weather_boost
+
+        # Predicted risk: blend historical base + current weather
+        base_risk = min(100, int(base * 2.5 * season_factor))
+        predicted_risk = min(100, int(risk_score * 0.4 + base_risk * 0.6 + random.randint(-3, 8)))
+
+        # Estimated payout
+        avg_payout = city_avg_payout.get(city_name, 450)
+        # Use real claims data if available
+        city_claims_data = [c for c in claims if str(c.get("zone_id", "")).lower().startswith(city_name.lower()[:4])]
+        if city_claims_data:
+            real_avg = sum(c.get("payout_amount", 0) for c in city_claims_data) / len(city_claims_data)
+            if real_avg > 100:
+                avg_payout = real_avg
+        estimated_weekly_payout = round(predicted_claims * avg_payout * random.uniform(0.9, 1.1), 2)
+
+        # Confidence: higher for stable weather, lower for volatile
+        base_conf = 0.82 if trigger_prob < 0.2 else 0.68
+        confidence = round(min(0.95, max(0.55, base_conf + random.uniform(-0.08, 0.08))), 2)
+
+        risk_factors = []
+        rainfall = response.get("rainfall", 0)
+        temp = response.get("temperature", 0)
+        wind = response.get("wind_speed", 0)
+        humidity = response.get("humidity", 0)
+
+        if rainfall > 20:
+            risk_factors.append("Elevated rainfall pattern")
+        if temp > 38:
+            risk_factors.append("Heat stress trend")
+        elif temp > 33:
+            risk_factors.append("Above-average temperature")
+        if wind > 30:
+            risk_factors.append("High wind advisory")
+        elif wind > 20:
+            risk_factors.append("Moderate wind activity")
+        if humidity > 85:
+            risk_factors.append("Monsoon humidity")
+        elif humidity > 70:
+            risk_factors.append("Elevated humidity")
+        # Seasonal risk factors
+        if month in (6, 7, 8, 9):
+            risk_factors.append("Monsoon season")
+        elif month in (4, 5) and city_name in ("Delhi", "Hyderabad", "Jaipur"):
+            risk_factors.append("Pre-monsoon heat belt")
+        if city_name in ("Mumbai", "Chennai", "Kolkata") and season_factor > 1.0:
+            risk_factors.append("Coastal flood zone")
+
+        city_forecasts.append({
+            "city": city_name,
+            "current_risk": risk_score,
+            "predicted_risk": predicted_risk,
+            "current_trigger_type": trigger_type,
+            "predicted_claims": predicted_claims,
+            "estimated_payout": estimated_weekly_payout,
+            "confidence": confidence,
+            "risk_factors": risk_factors,
+        })
+
+    # Sort by predicted_risk desc for frontend
+    city_forecasts.sort(key=lambda x: x["predicted_risk"], reverse=True)
+
+    total_predicted_claims = sum(f["predicted_claims"] for f in city_forecasts)
+    total_estimated_payout = sum(f["estimated_payout"] for f in city_forecasts)
+    high_risk_cities = [f["city"] for f in city_forecasts if f["predicted_risk"] > 45]
+
+    return {
+        "prediction_period": {
+            "start": (now + timedelta(days=1)).isoformat(),
+            "end": (now + timedelta(days=8)).isoformat(),
+        },
+        "overall": {
+            "predicted_total_claims": total_predicted_claims,
+            "estimated_total_payout": round(total_estimated_payout, 2),
+            "high_risk_cities": high_risk_cities,
+            "recommended_reserve": round(total_estimated_payout * 1.15, 2),
+        },
+        "city_forecasts": city_forecasts,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 3: Demo Simulation — Full End-to-End Flow
+# ═══════════════════════════════════════════════════════════════════════════
+
+class DemoSimulationRequest(BaseModel):
+    city: str = Field(default="Bengaluru")
+    scenario: Literal[
+        "rainstorm", "heatwave", "cyclone", "flooding", "demand_crash"
+    ] = "rainstorm"
+    worker_name: str = Field(default="Ramesh Kumar")
+    worker_plan: Literal["Basic", "Standard", "Premium"] = "Standard"
+    hours_lost: float = Field(default=4.0, gt=0)
+
+
+@app.post("/api/demo/simulate-disruption")
+async def demo_simulate_disruption(payload: DemoSimulationRequest):
+    """
+    Full end-to-end demo simulation:
+    1. Creates/uses demo worker
+    2. Triggers simulated weather event
+    3. AI evaluates claim with fraud detection
+    4. Processes instant payout through mock gateway
+    5. Returns complete timeline for video demo
+    """
+    demo_start = datetime.now(timezone.utc)
+
+    # Step 1: Create demo worker
+    demo_worker_id = 9999
+    if demo_worker_id not in users:
+        users[demo_worker_id] = {
+            "name": payload.worker_name,
+            "phone": "9876543210",
+            "city": payload.city,
+            "platform": "Swiggy",
+            "selected_plan": payload.worker_plan,
+            "plan_details": plans.get(payload.worker_plan, plans["Standard"]),
+            "zone_area": f"{payload.city.lower()}_central",
+            "upi_id": f"{payload.worker_name.lower().replace(' ', '.')}@upi",
+        }
+        policies[demo_worker_id] = {
+            "tier": payload.worker_plan,
+            "status": "active",
+            "started": demo_start.isoformat(),
+        }
+
+    user = users[demo_worker_id]
+    plan_detail = plans.get(payload.worker_plan, plans["Standard"])
+
+    # Step 2: Map scenario to demo triggers
+    scenario_map = {
+        "rainstorm": ["heavy_rain", "urban_flooding"],
+        "heatwave": ["extreme_heat"],
+        "cyclone": ["cyclone_alert", "heavy_rain"],
+        "flooding": ["urban_flooding", "heavy_rain", "zone_shutdown"],
+        "demand_crash": ["demand_collapse", "order_pause"],
+    }
+    demo_scenarios = scenario_map.get(payload.scenario, ["heavy_rain"])
+
+    # Step 3: Get zone center for GPS
+    zone_id = f"{payload.city.lower()}_central"
+    zone_center = CLAIM_ZONE_CENTERS.get(zone_id) or CLAIM_ZONE_CENTERS.get(payload.city.lower()) or (12.9716, 77.5946)
+
+    # Step 4: Evaluate claim with AI fraud detection
+    eval_payload = ClaimEvaluateRequest(
+        worker_id=demo_worker_id,
+        zone_id=zone_id,
+        city=payload.city,
+        gps_lat=zone_center[0],
+        gps_lon=zone_center[1],
+        hours_lost=payload.hours_lost,
+        app_active=True,
+        demo_mode=True,
+        demo_scenario=demo_scenarios[0],
+        demo_scenarios=demo_scenarios,
+        simulate_vpn=False,
+    )
+    claim_result = await evaluate_claim(eval_payload)
+    claim_data = claim_result.model_dump() if hasattr(claim_result, "model_dump") else claim_result
+
+    # Step 5: Process payout if approved
+    payout_txn = None
+    if claim_data.get("claim_status") in ("auto-approve", "approve-with-flag") and claim_data.get("payout_amount", 0) > 0:
+        payout_amount = claim_data["payout_amount"]
+        upi_id = user.get("upi_id", "worker@upi")
+        txn = process_payout(
+            worker_id=demo_worker_id,
+            claim_id=f"DEMO-{secrets.token_hex(4).upper()}",
+            amount=payout_amount,
+            gateway="razorpay",
+            upi_id=upi_id,
+            worker_name=user.get("name", "Worker"),
+        )
+        payout_txn = txn.to_dict()
+
+    demo_end = datetime.now(timezone.utc)
+
+    # Step 6: Build demo timeline
+    timeline = [
+        {
+            "step": 1,
+            "event": "disruption_detected",
+            "title": f"{payload.scenario.replace('_', ' ').title()} Detected",
+            "detail": f"External disruption in {payload.city} — {', '.join(demo_scenarios)} triggered",
+            "timestamp": demo_start.isoformat(),
+            "duration_ms": 0,
+        },
+        {
+            "step": 2,
+            "event": "trigger_evaluation",
+            "title": "AI Trigger Evaluation",
+            "detail": f"{len([t for t in claim_data.get('trigger_list', []) if t.get('fired')])} trigger(s) fired, fraud score: {claim_data.get('fraud_score', 0):.1%}",
+            "timestamp": (demo_start + timedelta(milliseconds=30)).isoformat(),
+            "duration_ms": 30,
+        },
+        {
+            "step": 3,
+            "event": "fraud_check",
+            "title": "5-Layer Fraud Detection",
+            "detail": f"Score: {claim_data.get('fraud_score', 0):.1%} — {claim_data.get('claim_status', 'unknown')}",
+            "timestamp": (demo_start + timedelta(milliseconds=60)).isoformat(),
+            "duration_ms": 30,
+        },
+        {
+            "step": 4,
+            "event": "claim_decision",
+            "title": "Claim Decision",
+            "detail": claim_data.get("explanation", ""),
+            "timestamp": (demo_start + timedelta(milliseconds=90)).isoformat(),
+            "duration_ms": 30,
+        },
+    ]
+
+    if payout_txn:
+        timeline.append({
+            "step": 5,
+            "event": "payout_initiated",
+            "title": "Instant Payout via Razorpay UPI",
+            "detail": f"₹{payout_txn['amount']} → {payout_txn.get('upi_id', 'worker@upi')}",
+            "timestamp": (demo_start + timedelta(milliseconds=120)).isoformat(),
+            "duration_ms": 30,
+        })
+        timeline.append({
+            "step": 6,
+            "event": "payout_completed",
+            "title": "Payment Completed",
+            "detail": f"TXN: {payout_txn['txn_id']} | UPI Ref: {payout_txn.get('upi_ref', 'N/A')} | Gateway: Razorpay",
+            "timestamp": (demo_start + timedelta(milliseconds=970)).isoformat(),
+            "duration_ms": 850,
+        })
+
+    return {
+        "demo_id": f"DEMO-{secrets.token_hex(4).upper()}",
+        "scenario": payload.scenario,
+        "city": payload.city,
+        "worker": {
+            "id": demo_worker_id,
+            "name": user.get("name"),
+            "plan": payload.worker_plan,
+            "upi_id": user.get("upi_id"),
+        },
+        "claim_result": claim_data,
+        "payout": payout_txn,
+        "timeline": timeline,
+        "total_duration_ms": int((demo_end - demo_start).total_seconds() * 1000),
     }

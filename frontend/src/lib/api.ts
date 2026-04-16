@@ -439,7 +439,7 @@ export interface ClaimEvaluateResult {
   worker_id: number;
   zone_id: string;
   city: string;
-  claim_status: "no-trigger" | "auto-approve" | "approve-with-flag" | "hold-for-review";
+  claim_status: "no-trigger" | "auto-approve" | "approve-with-flag" | "hold-for-review" | "auto-reject";
   fraud_score: number;
   payout_amount: number;
   trigger_list: ClaimEvaluateTrigger[];
@@ -524,6 +524,13 @@ export const evaluateClaimEngine = (data: {
     | "infrastructure_failure"
   >;
   simulate_vpn?: boolean;
+  fraud_test_overrides?: {
+    force_duplicate?: boolean;
+    force_frequency?: boolean | number;
+    force_gps_fail?: boolean;
+    force_app_inactive?: boolean;
+    force_vpn?: boolean;
+  };
 }) =>
   request<ClaimEvaluateResult>("/api/claims/evaluate", {
     method: "POST",
@@ -635,4 +642,191 @@ export const assessFraud = (userId: number, zoneId: string = "") =>
   request<FraudAssessment>("/api/fraud/assess", {
     method: "POST",
     body: JSON.stringify({ user_id: userId, zone_id: zoneId }),
+  });
+
+/* ---- Instant Payout (Simulated Payment Gateway) ---- */
+
+export interface PayoutTransaction {
+  txn_id: string;
+  gateway: "razorpay" | "upi_direct" | "stripe";
+  worker_id: number;
+  claim_id: string;
+  amount: number;
+  currency: string;
+  status: "initiated" | "processing" | "completed" | "failed";
+  upi_id?: string;
+  upi_ref?: string;
+  razorpay_payment_id?: string;
+  razorpay_order_id?: string;
+  stripe_transfer_id?: string;
+  initiated_at: string;
+  completed_at?: string;
+  processing_time_ms?: number;
+  failure_reason?: string;
+  metadata: Record<string, unknown>;
+}
+
+export const processPayout = (data: {
+  worker_id: number;
+  claim_id: string;
+  amount: number;
+  gateway?: "razorpay" | "upi_direct" | "stripe";
+  upi_id?: string;
+}) =>
+  request<PayoutTransaction>("/api/payout/process", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
+export const getPayoutStatus = (txnId: string) =>
+  request<PayoutTransaction>(`/api/payout/status/${encodeURIComponent(txnId)}`);
+
+export const getWorkerPayouts = (workerId: number) =>
+  request<{ worker_id: number; transactions: PayoutTransaction[]; total_disbursed: number }>(
+    `/api/payout/transactions/${workerId}`,
+  );
+
+export const getPayoutGatewayStats = () =>
+  request<{
+    total_transactions: number;
+    total_completed: number;
+    total_amount_disbursed: number;
+    avg_processing_time_ms: number;
+    by_gateway: Record<string, { count: number; total_amount: number; completed: number; failed: number }>;
+  }>("/api/payout/stats");
+
+/* ---- Worker Earnings Summary (Intelligent Dashboard) ---- */
+
+export interface EarningsSummary {
+  user_id: number;
+  plan: string;
+  weekly_premium: number;
+  coverage_status: string;
+  earnings: {
+    total: number;
+    this_week: number;
+    this_month: number;
+  };
+  claims_summary: {
+    total: number;
+    approved: number;
+    rejected: number;
+    this_week: number;
+    this_month: number;
+  };
+  return_ratio: number;
+  trust_score: number;
+  coverage_weeks: Array<{
+    week: string;
+    start: string;
+    end: string;
+    claims: number;
+    payout: number;
+    premium: number;
+  }>;
+  recent_payouts: PayoutTransaction[];
+}
+
+export const getEarningsSummary = (userId: number) =>
+  request<EarningsSummary>(`/api/worker/earnings-summary/${userId}`);
+
+/* ---- Admin Analytics (Intelligent Dashboard) ---- */
+
+export interface AdminAnalytics {
+  summary: {
+    total_workers: number;
+    total_claims: number;
+    total_payouts: number;
+    weekly_premium_revenue: number;
+    monthly_premium_revenue: number;
+  };
+  loss_ratios: {
+    weekly: number;
+    monthly: number;
+    overall: number;
+  };
+  fraud_stats: {
+    avg_score: number;
+    high_risk: number;
+    medium_risk: number;
+    low_risk: number;
+  };
+  trigger_breakdown: Record<string, { count: number; total_payout: number }>;
+  status_breakdown: Record<string, number>;
+  worker_segments: { gold: number; silver: number; standard: number; review: number };
+  daily_timeline: Record<string, { claims: number; payouts: number; avg_fraud: number }>;
+  payout_gateway_stats: {
+    total_transactions: number;
+    total_completed: number;
+    total_amount_disbursed: number;
+    avg_processing_time_ms: number;
+    by_gateway: Record<string, { count: number; total_amount: number; completed: number; failed: number }>;
+  };
+}
+
+export const getAdminAnalytics = () =>
+  request<AdminAnalytics>("/api/admin/analytics");
+
+export interface CityForecast {
+  city: string;
+  current_risk: number;
+  predicted_risk: number;
+  current_trigger_type: string;
+  predicted_claims: number;
+  estimated_payout: number;
+  confidence: number;
+  risk_factors: string[];
+}
+
+export interface PredictiveAnalytics {
+  prediction_period: { start: string; end: string };
+  overall: {
+    predicted_total_claims: number;
+    estimated_total_payout: number;
+    high_risk_cities: string[];
+    recommended_reserve: number;
+  };
+  city_forecasts: CityForecast[];
+}
+
+export const getPredictiveAnalytics = () =>
+  request<PredictiveAnalytics>("/api/admin/predictive");
+
+/* ---- Demo Simulation ---- */
+
+export interface DemoTimeline {
+  step: number;
+  event: string;
+  title: string;
+  detail: string;
+  timestamp: string;
+  duration_ms: number;
+}
+
+export interface DemoSimulationResult {
+  demo_id: string;
+  scenario: string;
+  city: string;
+  worker: {
+    id: number;
+    name: string;
+    plan: string;
+    upi_id: string;
+  };
+  claim_result: ClaimEvaluateResult;
+  payout: PayoutTransaction | null;
+  timeline: DemoTimeline[];
+  total_duration_ms: number;
+}
+
+export const simulateDisruption = (data: {
+  city?: string;
+  scenario?: "rainstorm" | "heatwave" | "cyclone" | "flooding" | "demand_crash";
+  worker_name?: string;
+  worker_plan?: "Basic" | "Standard" | "Premium";
+  hours_lost?: number;
+}) =>
+  request<DemoSimulationResult>("/api/demo/simulate-disruption", {
+    method: "POST",
+    body: JSON.stringify(data),
   });

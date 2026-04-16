@@ -11,11 +11,17 @@ import {
   TrendingDown,
   Wifi,
   Wind,
+  CreditCard,
+  CheckCircle2,
+  Zap,
+  Banknote,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   evaluateClaimEngine,
+  processPayout,
   type ClaimEvaluateResult,
+  type PayoutTransaction,
   ZONES,
 } from "@/lib/api";
 
@@ -95,6 +101,9 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
   const [result, setResult] = useState<ClaimEvaluateResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
+  const [payoutTxn, setPayoutTxn] = useState<PayoutTransaction | null>(null);
+  const [processingPayout, setProcessingPayout] = useState(false);
+  const GATEWAYS = ["razorpay", "upi_direct", "stripe"] as const;
 
   const normalizedCity = cityKey(city);
   const cityZones = useMemo(() => ZONES.filter((zone) => cityKey(zone.city) === normalizedCity), [normalizedCity]);
@@ -155,6 +164,7 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
   const runSimulation = async () => {
     setRunning(true);
     setError("");
+    setPayoutTxn(null);
     try {
       const claim = await evaluateClaimEngine({
         worker_id: workerId,
@@ -170,6 +180,29 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
         simulate_vpn: false,
       });
       setResult(claim);
+
+      // Auto-process instant payout when claim is approved
+      if (
+        (claim.claim_status === "auto-approve" || claim.claim_status === "approve-with-flag") &&
+        claim.payout_amount > 0
+      ) {
+        setProcessingPayout(true);
+        try {
+          const gateway = GATEWAYS[Math.floor(Math.random() * GATEWAYS.length)];
+          const txn = await processPayout({
+            worker_id: workerId,
+            claim_id: `CLM-${Date.now()}`,
+            amount: claim.payout_amount,
+            gateway,
+            upi_id: "worker@upi",
+          });
+          setPayoutTxn(txn);
+        } catch {
+          // payout processing failed silently — claim still valid
+        } finally {
+          setProcessingPayout(false);
+        }
+      }
     } catch (err: any) {
       setError(err?.message ?? "Could not evaluate claim");
     } finally {
@@ -364,6 +397,79 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
               <span className="text-base font-extrabold text-foreground">₹{result.payout_amount}</span>
             </div>
           </div>
+
+          {/* Instant Payout Gateway Processing */}
+          {processingPayout && (
+            <div className="rounded-2xl border border-primary/20 bg-primary/[0.05] p-4 text-center animate-in fade-in-0 duration-300">
+              <Loader2 className="w-5 h-5 animate-spin text-primary mx-auto mb-2" />
+              <p className="text-sm font-semibold text-foreground">Processing instant payout…</p>
+              <p className="text-[11px] text-muted-foreground mt-1">Routing through payment gateway</p>
+            </div>
+          )}
+          {payoutTxn && (
+            <div className="rounded-2xl border border-accent-green/30 bg-accent-green/[0.05] p-4 space-y-3 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={16} className="text-accent-green" strokeWidth={1.5} />
+                <p className="text-sm font-bold text-foreground">Instant Payout Processed</p>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Gateway</span>
+                  <span className="text-[11px] font-semibold text-foreground flex items-center gap-1.5">
+                    {payoutTxn.gateway === "razorpay" ? (
+                      <><CreditCard size={12} className="text-blue-400" /> Razorpay (Test Mode)</>
+                    ) : payoutTxn.gateway === "upi_direct" ? (
+                      <><Banknote size={12} className="text-green-400" /> UPI Direct (NPCI)</>
+                    ) : (
+                      <><CreditCard size={12} className="text-purple-400" /> Stripe (Sandbox)</>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Transaction ID</span>
+                  <span className="text-[11px] font-mono text-foreground/70">{payoutTxn.txn_id}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Amount</span>
+                  <span className="text-sm font-bold text-accent-green">₹{payoutTxn.amount}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Status</span>
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${payoutTxn.status === "completed" ? "bg-accent-green/15 text-accent-green" : "bg-warning/15 text-warning"}`}>
+                    {payoutTxn.status.toUpperCase()}
+                  </span>
+                </div>
+                {payoutTxn.processing_time_ms != null && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground">Processing time</span>
+                    <span className="text-[11px] font-mono text-foreground/70">{payoutTxn.processing_time_ms}ms</span>
+                  </div>
+                )}
+                {payoutTxn.upi_ref && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground">UPI Reference</span>
+                    <span className="text-[11px] font-mono text-foreground/70">{payoutTxn.upi_ref}</span>
+                  </div>
+                )}
+                {payoutTxn.razorpay_payment_id && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground">Razorpay ID</span>
+                    <span className="text-[11px] font-mono text-foreground/70">{payoutTxn.razorpay_payment_id}</span>
+                  </div>
+                )}
+                {payoutTxn.stripe_transfer_id && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground">Stripe Transfer</span>
+                    <span className="text-[11px] font-mono text-foreground/70">{payoutTxn.stripe_transfer_id}</span>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center justify-center gap-1.5 pt-2 border-t border-accent-green/15">
+                <Zap size={12} className="text-accent-green" strokeWidth={1.5} />
+                <span className="text-[11px] font-bold text-accent-green">Worker receives lost wages instantly</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
