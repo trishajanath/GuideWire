@@ -31,6 +31,8 @@ interface TriggerLabProps {
   city: string;
 }
 
+const TRIGGER_SCENARIOS_STORAGE_KEY = "guidewire.triggerlab.selectedScenarios";
+
 type SimulationCategory = "weather" | "platform" | "external";
 
 type SimulationScenario = {
@@ -96,7 +98,19 @@ const getTriggerLabel = (name: string) => name.replace(/_/g, " ").replace(/\b\w/
 
 export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) {
   const [selectedZone, setSelectedZone] = useState(zoneId);
-  const [selectedScenarios, setSelectedScenarios] = useState<Set<SimulationScenario["id"]>>(new Set());
+  const [selectedScenarios, setSelectedScenarios] = useState<Set<SimulationScenario["id"]>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = window.sessionStorage.getItem(TRIGGER_SCENARIOS_STORAGE_KEY);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return new Set();
+      const valid = parsed.filter((item): item is SimulationScenario["id"] => typeof item === "string" && item !== "none");
+      return new Set(valid);
+    } catch {
+      return new Set();
+    }
+  });
   const [hoursLost, setHoursLost] = useState(3);
   const [result, setResult] = useState<ClaimEvaluateResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -110,8 +124,7 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
   const gps = useMemo(() => cityGps[normalizedCity] ?? cityGps.bengaluru, [normalizedCity]);
 
   useEffect(() => {
-    if (cityZones.length === 0) return;
-    if (!cityZones.some((zone) => zone.id === selectedZone)) {
+    if (!selectedZone && cityZones.length > 0) {
       setSelectedZone(cityZones[0].id);
     }
   }, [cityZones, selectedZone]);
@@ -131,6 +144,11 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
   }, []);
 
   const selectedScenarioList = useMemo(() => [...selectedScenarios], [selectedScenarios]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem(TRIGGER_SCENARIOS_STORAGE_KEY, JSON.stringify(selectedScenarioList));
+  }, [selectedScenarioList]);
 
   const toggleScenario = (scenarioId: SimulationScenario["id"]) => {
     setSelectedScenarios((current) => {
@@ -227,15 +245,14 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
         <div className="grid grid-cols-2 gap-2">
           <label className="flex flex-col gap-1">
             <span className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Worker zone</span>
-            <select
+            <input
               value={selectedZone}
               onChange={(e) => setSelectedZone(e.target.value)}
-              className="appearance-none w-full bg-secondary/60 border border-border/30 rounded-lg px-2.5 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+              list="worker-zone-suggestions"
+              placeholder="Type zone id or area"
+              className="w-full bg-secondary/60 border border-border/30 rounded-lg px-2.5 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
             >
-              {cityZones.map((zone) => (
-                <option key={zone.id} value={zone.id}>{zone.area}, {zone.city}</option>
-              ))}
-            </select>
+            </input>
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Lost hours</span>
@@ -249,6 +266,11 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
             />
           </label>
         </div>
+        <datalist id="worker-zone-suggestions">
+          {cityZones.map((zone) => (
+            <option key={zone.id} value={zone.id} />
+          ))}
+        </datalist>
       </div>
 
       <div className="space-y-3">
@@ -368,18 +390,27 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
           <div className="rounded-2xl border border-border/60 bg-secondary/40 p-4">
             <p className="text-sm font-bold text-foreground mb-3">Triggered categories</p>
             <div className="space-y-2">
-              {result.trigger_list.map((item) => (
-                <div key={`${item.category}_${item.name}`} className="rounded-xl bg-background/40 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-semibold text-foreground">{getTriggerLabel(item.name)}</p>
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{item.category}</span>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground mt-1">
-                    Source: {item.source} · {item.fired ? "Fired" : "Not fired"}
-                  </p>
-                  {item.payout?.formula && <p className="text-[11px] text-muted-foreground mt-1">{item.payout.formula}</p>}
-                </div>
-              ))}
+              {result.trigger_list.filter((item) => item.fired).length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">No trigger fired.</p>
+              ) : (
+                result.trigger_list
+                  .filter((item) => item.fired)
+                  .map((item) => (
+                    <div key={`${item.category}_${item.name}`} className="rounded-xl bg-background/40 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-foreground">{getTriggerLabel(item.name)}</p>
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{item.category}</span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Source: {item.source} · Fired
+                      </p>
+                      {item.payout?.formula && <p className="text-[11px] text-muted-foreground mt-1">{item.payout.formula}</p>}
+                      {item.payout?.ml_future_loss_summary && (
+                        <p className="text-[11px] text-primary/90 mt-1">{item.payout.ml_future_loss_summary}</p>
+                      )}
+                    </div>
+                  ))
+              )}
             </div>
           </div>
 
@@ -392,6 +423,19 @@ export default function TriggerLab({ workerId, zoneId, city }: TriggerLabProps) 
                 .filter((formula): formula is string => Boolean(formula))
                 .join(" + ") || "No trigger fired"}
             </p>
+            {(() => {
+              const firedWithPayout = result.trigger_list.filter((item) => item.fired && item.payout);
+              const probabilities = firedWithPayout
+                .map((item) => item.payout?.ml_future_loss_probability)
+                .filter((value): value is number => typeof value === "number");
+              if (probabilities.length === 0) return null;
+              const maxProbability = Math.max(...probabilities);
+              return (
+                <p className="text-[11px] text-primary/90 mt-2">
+                  ML outlook: {Math.round(maxProbability * 100)}% probability of future lost hours in the next disruption window.
+                </p>
+              );
+            })()}
             <div className="flex items-center justify-between mt-3 pt-3 border-t border-border/40">
               <span className="text-xs text-muted-foreground">Total payout</span>
               <span className="text-base font-extrabold text-foreground">₹{result.payout_amount}</span>

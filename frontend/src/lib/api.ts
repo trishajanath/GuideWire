@@ -260,6 +260,10 @@ export const getRecommendedPlan = (avgDailyHours: number, zoneRisk: number) =>
 export interface PayoutResult {
   payout: number;
   status: string;
+  submitted_hours: number;
+  adjusted_hours: number;
+  coverage_hour_adjustment: number;
+  adjustment_reason: string;
 }
 
 export const calculatePayout = (
@@ -267,6 +271,8 @@ export const calculatePayout = (
   hourlyRate: number,
   multiplier: number,
   dailyCap: number,
+  weatherRiskScore?: number,
+  triggerProbability?: number,
 ) =>
   request<PayoutResult>("/api/payout/calculate", {
     method: "POST",
@@ -275,6 +281,8 @@ export const calculatePayout = (
       hourly_rate: hourlyRate,
       multiplier: multiplier,
       daily_cap: dailyCap,
+      weather_risk_score: weatherRiskScore,
+      trigger_probability: triggerProbability,
     }),
   });
 
@@ -426,6 +434,11 @@ export interface ClaimEvaluateTrigger {
   };
   payout?: {
     hours_lost: number;
+    adjusted_hours: number;
+    coverage_hour_adjustment: number;
+    adjustment_reason: string;
+    ml_future_loss_probability?: number;
+    ml_future_loss_summary?: string;
     hourly_rate: number;
     severity_multiplier: number;
     daily_cap: number;
@@ -612,6 +625,8 @@ export interface ClaimRecord {
   payout_amount: number;
   zone_id: string | null;
   hours_lost: number;
+  adjusted_hours?: number;
+  coverage_hour_adjustment?: number;
   hourly_rate: number;
   multiplier: number;
   timestamp: string;

@@ -41,6 +41,8 @@ const PayoutDetail = () => {
   const isApproved = claim.status === "approved";
   const isReview = claim.status === "under_review";
   const total = Math.round(claim.payout_amount);
+  const adjustedHours = claim.adjusted_hours ?? claim.hours_lost;
+  const hourAdjustment = claim.coverage_hour_adjustment ?? Number((adjustedHours - claim.hours_lost).toFixed(2));
   const ts = new Date(claim.timestamp);
   const dateStr = ts.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
   const timeStr = ts.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
@@ -83,6 +85,17 @@ const PayoutDetail = () => {
             <div className="flex justify-between py-2 border-b border-border">
               <span className="text-sm text-muted-foreground">Lost Hours</span>
               <span className="text-sm font-bold text-foreground">{claim.hours_lost} hours</span>
+            </div>
+            <div className="flex justify-between py-2 border-b border-border">
+              <span className="text-sm text-muted-foreground">Covered Hours (Adjusted)</span>
+              <span className="text-sm font-bold text-foreground">{adjustedHours} hours</span>
+            </div>
+            <div className="flex justify-between py-2 border-b border-border">
+              <span className="text-sm text-muted-foreground">Coverage Hour Adjustment</span>
+              <span className={`text-sm font-bold ${hourAdjustment >= 0 ? "text-accent-green" : "text-warning"}`}>
+                {hourAdjustment >= 0 ? "+" : ""}
+                {hourAdjustment}h
+              </span>
             </div>
             <div className="flex justify-between py-2 border-b border-border">
               <span className="text-sm text-muted-foreground">Hourly Rate</span>

@@ -77,11 +77,17 @@ class PayoutCalculationRequest(BaseModel):
     hourly_rate: float = Field(..., ge=0)
     multiplier: float = Field(..., ge=0)
     daily_cap: float = Field(..., ge=0)
+    weather_risk_score: int | None = Field(default=None, ge=0, le=100)
+    trigger_probability: float | None = Field(default=None, ge=0, le=1)
 
 
 class PayoutCalculationResponse(BaseModel):
     payout: float = Field(..., ge=0)
     status: str
+    submitted_hours: float = Field(..., ge=0)
+    adjusted_hours: float = Field(..., ge=0)
+    coverage_hour_adjustment: float
+    adjustment_reason: str
 
 
 class RecommendPlanRequest(BaseModel):

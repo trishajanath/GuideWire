@@ -76,8 +76,10 @@ except ImportError:
 
 try:
     from .payout import calculate_payout_amount
+    from .payout import adjust_coverage_hours
 except ImportError:
     from payout import calculate_payout_amount
+    from payout import adjust_coverage_hours
 
 try:
     from .plan_recommendation import recommend_plan
@@ -650,6 +652,11 @@ class TriggerFraudResponse(BaseModel):
 
 class TriggerPayoutResponse(BaseModel):
     hours_lost: float
+    adjusted_hours: float
+    coverage_hour_adjustment: float
+    adjustment_reason: str
+    ml_future_loss_probability: float | None = None
+    ml_future_loss_summary: str | None = None
     hourly_rate: float
     severity_multiplier: float
     daily_cap: float
@@ -738,18 +745,28 @@ async def _get_openweather_metrics(city: str) -> dict[str, float | bool]:
         normalized = city.strip().lower()
         fallback_rain = float(mock_rainfall_by_city.get(normalized, 0.0))
         fallback_temp = 44.0 if normalized in {"mumbai", "chennai", "delhi"} else 34.0
-        return {"rainfall_mm_per_hr": fallback_rain, "temperature_c": fallback_temp, "visibility_meters": 2000.0, "urban_flooding": False}
+        return {
+            "rainfall_mm_per_hr": fallback_rain,
+            "temperature_c": fallback_temp,
+            "visibility_meters": 2000.0,
+            "urban_flooding": False,
+            "humidity_pct": 65.0,
+            "wind_kmph": 12.0,
+        }
 
     rain = payload.get("rain", {}) if isinstance(payload, dict) else {}
     rainfall_mm = float(rain.get("1h") or 0.0)
     if rainfall_mm <= 0:
                 rainfall_mm = float(rain.get("3h") or 0.0) / 3.0
     main = payload.get("main", {}) if isinstance(payload, dict) else {}
+    wind = payload.get("wind", {}) if isinstance(payload, dict) else {}
     return {
         "rainfall_mm_per_hr": rainfall_mm,
         "temperature_c": float(main.get("temp", 0.0)),
         "visibility_meters": float(payload.get("visibility", 2000.0)) if isinstance(payload, dict) else 2000.0,
         "urban_flooding": False,
+        "humidity_pct": float(main.get("humidity", 0.0)),
+        "wind_kmph": float(wind.get("speed", 0.0)) * 3.6,
     }
 
 
@@ -940,6 +957,31 @@ def _claim_severity_multiplier(trigger_name: str, *, demand_drop_pct: float | No
     return _severity_for_trigger(trigger_name, demand_drop_pct=demand_drop_pct)
 
 
+def _demo_fraud_score_from_scenarios(scenarios: list[str]) -> float:
+    """Calibrate demo fraud score from selected trigger scenarios.
+
+    This is only used in trigger simulation mode (not real claim adjudication and
+    not spoof/fraud override testing). It lets trigger demos show meaningful fraud
+    scores based on what was selected.
+    """
+    if not scenarios:
+        return 0.0
+
+    score = 0.12
+    score += min(0.22, 0.06 * max(0, len(scenarios) - 1))
+
+    if any(item in {"demand_collapse", "order_pause", "zone_shutdown", "zone_restriction", "platform_outage"} for item in scenarios):
+        score += 0.08
+
+    if any(item in {"curfew", "public_health_emergency", "civil_disturbance", "infrastructure_failure"} for item in scenarios):
+        score += 0.06
+
+    if any(item in {"cyclone_alert", "urban_flooding"} for item in scenarios):
+        score += 0.04
+
+    return round(min(score, 0.85), 3)
+
+
 @app.post("/api/claims/evaluate", response_model=ClaimEvaluateResponse)
 async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None):
     user = users.get(payload.worker_id)
@@ -1004,6 +1046,9 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
         )
         applied_scenarios = list(dict.fromkeys(scenario_bundle))
         applied_scenario = applied_scenarios[0] if applied_scenarios else None
+    demo_trigger_allowlist = set(applied_scenarios)
+    demo_has_fraud_overrides = bool(payload.fraud_test_overrides)
+    demo_trigger_simulation = payload.demo_mode and not demo_has_fraud_overrides
 
     # ── VPN / Proxy detection ──────────────────────────────────────────
     client_ip = ""
@@ -1046,6 +1091,32 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
     imd_alert_level = str(imd_alert.get("alert_level") if imd_alert else "none")
     if simulated_imd_alert_level is not None:
         imd_alert_level = simulated_imd_alert_level
+
+    weather_risk = calculate_weather_risk(
+        {
+            "rainfall": float(weather.get("rainfall_mm_per_hr", 0.0)),
+            "temperature": float(weather.get("temperature_c", 0.0)),
+            "humidity": float(weather.get("humidity_pct", 65.0)),
+            "wind_speed": float(weather.get("wind_kmph", 12.0)),
+        }
+    )
+    alert_for_adjustment = imd_alert
+    if simulated_imd_alert_level is not None:
+        alert_for_adjustment = {
+            "alert_level": simulated_imd_alert_level,
+            "event_type": "rain",
+        }
+    if alert_for_adjustment is not None:
+        weather_risk = _apply_imd_adjustment_to_risk(weather_risk, alert_for_adjustment)
+
+    coverage_hours = adjust_coverage_hours(
+        lost_hours=payload.hours_lost,
+        weather_risk_score=int(weather_risk.get("weather_risk_score", 0)),
+        trigger_probability=float(weather_risk.get("trigger_probability", 0.0)),
+    )
+    adjusted_hours = float(coverage_hours["adjusted_hours"])
+    coverage_hour_adjustment = float(coverage_hours["coverage_hour_adjustment"])
+    adjustment_reason = str(coverage_hours["adjustment_reason"])
 
     trigger_specs = [
         {
@@ -1167,6 +1238,10 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
         },
     ]
 
+    if payload.demo_mode and demo_trigger_allowlist:
+        for spec in trigger_specs:
+            spec["fired"] = bool(spec["fired"]) and str(spec["name"]) in demo_trigger_allowlist
+
     claim_trigger_responses: list[ClaimTriggerResponse] = []
     highest_fraud = 0.0
 
@@ -1213,18 +1288,42 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             else:
                 severity_multiplier = float(spec["severity_multiplier"])
 
-            raw_amount = payload.hours_lost * hourly_rate * severity_multiplier
+            raw_amount = adjusted_hours * hourly_rate * severity_multiplier
             final_amount = min(raw_amount, daily_cap)
             _hrs = int(payload.hours_lost) if payload.hours_lost == int(payload.hours_lost) else payload.hours_lost
+            _adj_hrs = int(adjusted_hours) if adjusted_hours == int(adjusted_hours) else adjusted_hours
             _fa = int(final_amount) if final_amount == int(final_amount) else round(final_amount, 2)
+            adjustment_suffix = ""
+            if abs(coverage_hour_adjustment) >= 0.01:
+                sign = "+" if coverage_hour_adjustment >= 0 else ""
+                adjustment_suffix = f" ({sign}{coverage_hour_adjustment}h)"
+            ml_future_loss_probability = float(min(1.0, max(0.0, float(weather_risk.get("trigger_probability", 0.0)))))
+            ml_prob_pct = int(round(ml_future_loss_probability * 100.0))
+            if coverage_hour_adjustment > 0:
+                ml_future_loss_summary = (
+                    f"ML forecast: {ml_prob_pct}% chance of extended disruption; coverage hours were increased by "
+                    f"{coverage_hour_adjustment}h."
+                )
+            elif coverage_hour_adjustment < 0:
+                ml_future_loss_summary = (
+                    f"ML forecast: {ml_prob_pct}% chance of extended disruption; coverage hours were reduced by "
+                    f"{abs(coverage_hour_adjustment)}h."
+                )
+            else:
+                ml_future_loss_summary = f"ML forecast: {ml_prob_pct}% chance of extended disruption; no hour adjustment applied."
             payout_response = TriggerPayoutResponse(
                 hours_lost=payload.hours_lost,
+                adjusted_hours=adjusted_hours,
+                coverage_hour_adjustment=coverage_hour_adjustment,
+                adjustment_reason=adjustment_reason,
+                ml_future_loss_probability=ml_future_loss_probability,
+                ml_future_loss_summary=ml_future_loss_summary,
                 hourly_rate=hourly_rate,
                 severity_multiplier=severity_multiplier,
                 daily_cap=daily_cap,
                 raw_amount=round(raw_amount, 2),
                 final_amount=round(final_amount, 2),
-                formula=f"{_hrs}h × ₹{int(hourly_rate)} × {severity_multiplier} = ₹{_fa}",
+                formula=f"{_hrs}h{adjustment_suffix} -> {_adj_hrs}h × ₹{int(hourly_rate)} × {severity_multiplier} = ₹{_fa}",
             )
 
             highest_fraud = max(highest_fraud, fraud_score)
@@ -1261,6 +1360,25 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
         else:
             claim_status = "auto-approve"
 
+        if demo_trigger_simulation and fired_triggers:
+            # TriggerLab mode: validate trigger behavior only, keep fraud non-blocking.
+            highest_fraud = min(highest_fraud, 0.18)
+            claim_status = "auto-approve"
+        elif payload.demo_mode and demo_has_fraud_overrides and fired_triggers:
+            # Fraud Spoof mode: combine selected trigger mix with explicit spoof toggles.
+            scenario_names = applied_scenarios or [item.name for item in fired_triggers]
+            highest_fraud = max(highest_fraud, _demo_fraud_score_from_scenarios(scenario_names))
+
+            # Recompute the fraud decision bands for combined trigger+fraud demo mode.
+            if highest_fraud > 0.9:
+                claim_status = "auto-reject"
+            elif highest_fraud > 0.7:
+                claim_status = "hold-for-review"
+            elif highest_fraud >= 0.3:
+                claim_status = "approve-with-flag"
+            else:
+                claim_status = "auto-approve"
+
         summed_payout = round(sum(item.payout.final_amount for item in fired_triggers if item.payout), 2)
         payout_amount = 0.0 if claim_status in ("hold-for-review", "auto-reject") else round(min(summed_payout, daily_cap), 2)
         explanation = (
@@ -1281,6 +1399,8 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             "payout_amount": payout_amount,
             "zone_id": payload.zone_id,
             "hours_lost": payload.hours_lost,
+            "adjusted_hours": adjusted_hours,
+            "coverage_hour_adjustment": coverage_hour_adjustment,
             "hourly_rate": hourly_rate,
             "multiplier": 1.0,
         }
@@ -2201,6 +2321,7 @@ async def auto_claim(payload: AutoClaimRequest):
         adjusted_risk = _apply_imd_adjustment_to_risk(risk, imd_alert)
 
         weather_risk_score = adjusted_risk["weather_risk_score"]
+        trigger_probability = float(adjusted_risk.get("trigger_probability", 0.0))
         trigger_type = adjusted_risk["trigger_type"]
         trigger_active = weather_risk_score > 60
 
@@ -2231,6 +2352,7 @@ async def auto_claim(payload: AutoClaimRequest):
         # Fallback to mock
         weather_trigger = check_weather_trigger(city)
         weather_risk_score = 50 if weather_trigger["trigger_status"] else 20
+        trigger_probability = 0.5 if weather_trigger["trigger_status"] else 0.2
         anomaly_score = -0.5 if weather_trigger["trigger_status"] else 0.3
         trigger_active = weather_trigger["trigger_status"]
 
@@ -2248,6 +2370,13 @@ async def auto_claim(payload: AutoClaimRequest):
     )
     fraud_score = fraud_result["overall_score"]
     now = datetime.now(timezone.utc)
+    coverage_hours = adjust_coverage_hours(
+        lost_hours=payload.hours_lost,
+        weather_risk_score=int(weather_risk_score),
+        trigger_probability=float(trigger_probability),
+    )
+    adjusted_hours = float(coverage_hours["adjusted_hours"])
+    coverage_hour_adjustment = float(coverage_hours["coverage_hour_adjustment"])
 
     if not weather_trigger["trigger_status"]:
         claim_record = {
@@ -2260,6 +2389,8 @@ async def auto_claim(payload: AutoClaimRequest):
             "payout_amount": 0,
             "zone_id": zone_id or city,
             "hours_lost": payload.hours_lost,
+            "adjusted_hours": adjusted_hours,
+            "coverage_hour_adjustment": coverage_hour_adjustment,
             "hourly_rate": plan_details["hourly_rate"],
             "multiplier": 1.0,
         }
@@ -2276,7 +2407,7 @@ async def auto_claim(payload: AutoClaimRequest):
 
     multiplier = 1.2
     payout = min(
-        payload.hours_lost * plan_details["hourly_rate"] * multiplier,
+        adjusted_hours * plan_details["hourly_rate"] * multiplier,
         plan_details["daily_cap"],
     )
     payout_amount = round(payout, 2)
@@ -2296,6 +2427,8 @@ async def auto_claim(payload: AutoClaimRequest):
             "payout_amount": payout_amount if claim_status == "approved" else 0,
             "zone_id": zone_id or city,
             "hours_lost": payload.hours_lost,
+            "adjusted_hours": adjusted_hours,
+            "coverage_hour_adjustment": coverage_hour_adjustment,
             "hourly_rate": plan_details["hourly_rate"],
             "multiplier": multiplier,
         }
@@ -2535,13 +2668,25 @@ def validate_claim_endpoint(payload: ValidateClaimRequest):
 
 @app.post("/api/payout/calculate", response_model=PayoutCalculationResponse)
 def calculate_payout_endpoint(payload: PayoutCalculationRequest):
-    payout = calculate_payout_amount(
+    adjusted = adjust_coverage_hours(
         lost_hours=payload.lost_hours,
+        weather_risk_score=payload.weather_risk_score,
+        trigger_probability=payload.trigger_probability,
+    )
+    payout = calculate_payout_amount(
+        lost_hours=float(adjusted["adjusted_hours"]),
         hourly_rate=payload.hourly_rate,
         multiplier=payload.multiplier,
         daily_cap=payload.daily_cap,
     )
-    return {"payout": payout, "status": "processed"}
+    return {
+        "payout": payout,
+        "status": "processed",
+        "submitted_hours": adjusted["submitted_hours"],
+        "adjusted_hours": adjusted["adjusted_hours"],
+        "coverage_hour_adjustment": adjusted["coverage_hour_adjustment"],
+        "adjustment_reason": adjusted["adjustment_reason"],
+    }
 
 
 @app.post("/api/recommend-plan", response_model=RecommendPlanResponse)
@@ -2758,6 +2903,8 @@ def get_user_claims(user_id: int):
             "payout_amount": c.get("payout_amount", 0),
             "zone_id": c.get("zone_id"),
             "hours_lost": c.get("hours_lost", 0),
+            "adjusted_hours": c.get("adjusted_hours", c.get("hours_lost", 0)),
+            "coverage_hour_adjustment": c.get("coverage_hour_adjustment", 0.0),
             "hourly_rate": c.get("hourly_rate", 0),
             "multiplier": c.get("multiplier", 1.0),
             "timestamp": c["timestamp"].isoformat(),

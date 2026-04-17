@@ -252,8 +252,17 @@ const TriggerDemo = () => {
                   <p className="text-[11px] text-muted-foreground mt-1">
                     Source: {item.source} · Value {item.value ?? 0} vs threshold {item.threshold ?? 0}
                   </p>
+                  {item.payout && Math.abs(item.payout.coverage_hour_adjustment) > 0.01 && (
+                    <p className="text-[11px] text-warning mt-1">
+                      Coverage hours adjusted: {item.payout.hours_lost}h {"->"} {item.payout.adjusted_hours}h ({item.payout.coverage_hour_adjustment > 0 ? "+" : ""}
+                      {item.payout.coverage_hour_adjustment}h)
+                    </p>
+                  )}
                   {item.payout?.formula && (
                     <p className="text-[11px] text-muted-foreground mt-1">{item.payout.formula}</p>
+                  )}
+                  {item.payout?.adjustment_reason && (
+                    <p className="text-[11px] text-muted-foreground/80 mt-1">{item.payout.adjustment_reason}</p>
                   )}
                 </div>
               ))}

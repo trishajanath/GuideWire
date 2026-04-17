@@ -585,8 +585,9 @@ const Policy = () => {
                 )}
                 {claims.map((claim) => {
                   const Icon = triggerIcon(claim.trigger_type);
-                  const formula = `${claim.hours_lost}h x ₹${claim.hourly_rate} x ${claim.multiplier} = ₹${Math.round(
-                    claim.hours_lost * claim.hourly_rate * claim.multiplier,
+                  const adjustedHours = claim.adjusted_hours ?? claim.hours_lost;
+                  const formula = `${adjustedHours}h x ₹${claim.hourly_rate} x ${claim.multiplier} = ₹${Math.round(
+                    adjustedHours * claim.hourly_rate * claim.multiplier,
                   )}`;
                   const paid = ["paid", "approved", "auto-approve"].includes(claim.status.toLowerCase());
                   return (
@@ -603,6 +604,12 @@ const Policy = () => {
                         </span>
                       </div>
                       <p className="text-[11px] text-muted-foreground mt-1">{formatDate(claim.timestamp)}</p>
+                      {Math.abs((claim.coverage_hour_adjustment ?? 0)) > 0.01 && (
+                        <p className="text-[11px] text-warning mt-1">
+                          Coverage hours auto-adjusted: {claim.hours_lost}h {"->"} {adjustedHours}h ({(claim.coverage_hour_adjustment ?? 0) > 0 ? "+" : ""}
+                          {claim.coverage_hour_adjustment}h)
+                        </p>
+                      )}
                       <p className="text-[11px] text-muted-foreground mt-1">{formula}</p>
                       <p className="text-sm font-bold text-foreground mt-1">₹{claim.payout_amount}</p>
                     </div>

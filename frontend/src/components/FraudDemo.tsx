@@ -250,12 +250,26 @@ interface FraudDemoProps {
   city: string;
 }
 
+const TRIGGER_SCENARIOS_STORAGE_KEY = "guidewire.triggerlab.selectedScenarios";
+
 const normalizeCityKey = (value: string) =>
   value
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ")
     .replace("bangalore", "bengaluru");
+
+const readStoredTriggerScenarios = (): string[] => {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.sessionStorage.getItem(TRIGGER_SCENARIOS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === "string" && item !== "none");
+  } catch {
+    return [];
+  }
+};
 
 export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
   // Editable claim fields
@@ -271,8 +285,7 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
   }, [cityKey]);
 
   useEffect(() => {
-    if (cityZones.length === 0) return;
-    if (!cityZones.some((zone) => zone.id === selectedZone)) {
+    if (!selectedZone && cityZones.length > 0) {
       setSelectedZone(cityZones[0].id);
       setResult(null);
     }
@@ -283,6 +296,20 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
   const [result, setResult] = useState<ClaimEvaluateResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [runCount, setRunCount] = useState(0);
+  const [linkedTriggerScenarios, setLinkedTriggerScenarios] = useState<string[]>([]);
+
+  useEffect(() => {
+    const syncLinkedScenarios = () => {
+      setLinkedTriggerScenarios(readStoredTriggerScenarios());
+    };
+
+    syncLinkedScenarios();
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", syncLinkedScenarios);
+      return () => window.removeEventListener("focus", syncLinkedScenarios);
+    }
+    return undefined;
+  }, []);
 
   const toggleScenario = (id: string) => {
     setActiveScenarios((prev) => {
@@ -322,6 +349,12 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
   const demoScenario = !anyActive || hasNoDisruption ? ("none" as const) : ("heavy_rain" as const);
 
   const activeCount = activeScenarios.size;
+  const linkedTriggerLabel =
+    linkedTriggerScenarios.length === 0
+      ? "No linked trigger"
+      : linkedTriggerScenarios.length === 1
+        ? linkedTriggerScenarios[0].replace(/_/g, " ")
+        : `${linkedTriggerScenarios.length} linked triggers`;
 
   // Zone options (memoized)
   const zoneOptions = useMemo(
@@ -341,15 +374,26 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
     setLoading(true);
     setResult(null);
 
-    // Build explicit fraud overrides so only the toggled scenarios flag,
-    // regardless of accumulated claim history in the backend.
-    const fraudOverrides = {
-      force_duplicate: hasDuplicate,
-      force_frequency: hasDuplicate,   // frequency also rises with duplicate
-      force_gps_fail: hasGpsSpoof,
-      force_app_inactive: hasAppInactive,
-      force_vpn: hasVpn,
-    };
+    const selectedTriggerScenarios = readStoredTriggerScenarios();
+    setLinkedTriggerScenarios(selectedTriggerScenarios);
+
+    const scenarioSet = new Set<string>(selectedTriggerScenarios);
+    if (hasNoDisruption) {
+      scenarioSet.clear();
+    }
+    const combinedScenarios = Array.from(scenarioSet);
+
+    // Only send overrides when fraud toggles are active.
+    const hasFraudOverrides = hasGpsSpoof || hasAppInactive || hasDuplicate || hasVpn;
+    const fraudOverrides = hasFraudOverrides
+      ? {
+          force_duplicate: hasDuplicate,
+          force_frequency: hasDuplicate,
+          force_gps_fail: hasGpsSpoof,
+          force_app_inactive: hasAppInactive,
+          force_vpn: hasVpn,
+        }
+      : undefined;
 
     try {
       const res = await evaluateClaimEngine({
@@ -360,8 +404,9 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
         gps_lon: gps.lon,
         hours_lost: 3,
         app_active: appActive,
-        demo_mode: true,
-        demo_scenario: demoScenario,
+        demo_mode: combinedScenarios.length > 0,
+        demo_scenario: combinedScenarios[0] ?? demoScenario,
+        demo_scenarios: combinedScenarios,
         simulate_vpn: hasVpn,
         fraud_test_overrides: fraudOverrides,
       });
@@ -398,12 +443,16 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
         </p>
 
         <div className="grid grid-cols-2 gap-2">
-          <MiniSelect
-            label="Worker zone"
-            value={selectedZone}
-            options={zoneOptions}
-            onChange={(v) => { setSelectedZone(v); setResult(null); }}
-          />
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Worker zone</span>
+            <input
+              value={selectedZone}
+              onChange={(e) => { setSelectedZone(e.target.value); setResult(null); }}
+              list="fraud-demo-zone-suggestions"
+              placeholder="Type zone id or area"
+              className="w-full bg-secondary/60 border border-border/30 rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+            />
+          </label>
           {hasGpsSpoof && (
             <MiniSelect
               label="Spoof GPS to"
@@ -413,6 +462,11 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
             />
           )}
         </div>
+        <datalist id="fraud-demo-zone-suggestions">
+          {cityZones.map((zone) => (
+            <option key={zone.id} value={zone.id} />
+          ))}
+        </datalist>
 
         {/* Live config badges */}
         <div className="flex flex-wrap gap-1.5 pt-1">
@@ -432,7 +486,7 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
             hasNoDisruption ? "bg-destructive/10 text-destructive" : "bg-accent-green/10 text-accent-green"
           }`}>
             <Crosshair className="w-3 h-3" />
-            {hasNoDisruption ? "No event" : "Heavy rain"}
+            {hasNoDisruption ? "No event" : linkedTriggerLabel}
           </span>
           {hasDuplicate && (
             <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md font-medium bg-destructive/10 text-destructive">
@@ -445,6 +499,21 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
               <Wifi className="w-3 h-3" />
               VPN on
             </span>
+          )}
+        </div>
+
+        <div className="pt-1">
+          <p className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider mb-1">Linked trigger scenarios</p>
+          {linkedTriggerScenarios.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">No TriggerLab scenarios saved. Default heavy rain will be used.</p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {linkedTriggerScenarios.map((scenario) => (
+                <span key={scenario} className="text-[11px] px-2 py-0.5 rounded-md bg-primary/10 text-primary font-medium">
+                  {scenario.replace(/_/g, " ")}
+                </span>
+              ))}
+            </div>
           )}
         </div>
       </div>
