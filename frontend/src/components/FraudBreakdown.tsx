@@ -175,12 +175,36 @@ interface FraudBreakdownProps {
 }
 
 export default function FraudBreakdown({ assessment, compact = false }: FraudBreakdownProps) {
-  const overallColor = scoreColor(assessment.overall_score);
-  const overallBg = scoreBg(assessment.overall_score);
+  const derivedRiskLevel: FraudAssessment["risk_level"] =
+    (assessment?.overall_score ?? 0) < 0.3
+      ? "LOW"
+      : (assessment?.overall_score ?? 0) < 0.6
+        ? "MEDIUM"
+        : "HIGH";
+
+  const hasExplicitRiskLevel =
+    assessment?.risk_level === "LOW" ||
+    assessment?.risk_level === "MEDIUM" ||
+    assessment?.risk_level === "HIGH";
+
+  const safeAssessment: FraudAssessment = {
+    overall_score: Number.isFinite(assessment?.overall_score) ? assessment.overall_score : 0,
+    risk_level: hasExplicitRiskLevel ? assessment.risk_level : derivedRiskLevel,
+    allow_payout: assessment?.allow_payout ?? true,
+    explanation:
+      assessment?.explanation ??
+      ((assessment?.overall_score ?? 0) < 0.3
+        ? "No fraud indicators detected."
+        : "Potential fraud indicators detected."),
+    signals: Array.isArray(assessment?.signals) ? assessment.signals : [],
+  };
+
+  const overallColor = scoreColor(safeAssessment.overall_score);
+  const overallBg = scoreBg(safeAssessment.overall_score);
   const RiskIcon =
-    assessment.risk_level === "LOW"
+    safeAssessment.risk_level === "LOW"
       ? CheckCircle2
-      : assessment.risk_level === "MEDIUM"
+      : safeAssessment.risk_level === "MEDIUM"
         ? AlertTriangle
         : XCircle;
 
@@ -194,13 +218,13 @@ export default function FraudBreakdown({ assessment, compact = false }: FraudBre
             <span
               className={`text-xs font-bold px-2 py-0.5 rounded-full ${overallBg} ${overallColor}`}
             >
-              {assessment.risk_level}
+              {safeAssessment.risk_level}
             </span>
           </div>
-          <p className="text-xs text-muted-foreground truncate">{assessment.explanation}</p>
+          <p className="text-xs text-muted-foreground truncate">{safeAssessment.explanation}</p>
         </div>
         <span className={`text-lg font-mono font-bold ${overallColor}`}>
-          {(assessment.overall_score * 100).toFixed(0)}%
+          {(safeAssessment.overall_score * 100).toFixed(0)}%
         </span>
       </div>
     );
@@ -222,25 +246,29 @@ export default function FraudBreakdown({ assessment, compact = false }: FraudBre
             <div className="flex items-center gap-1.5">
               <RiskIcon className={`w-5 h-5 ${overallColor}`} />
               <span className={`text-2xl font-mono font-bold ${overallColor}`}>
-                {(assessment.overall_score * 100).toFixed(0)}%
+                {(safeAssessment.overall_score * 100).toFixed(0)}%
               </span>
             </div>
             <span
               className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${overallBg} ${overallColor}`}
             >
-              {assessment.risk_level} RISK
+              {safeAssessment.risk_level} RISK
             </span>
           </div>
         </div>
 
-        <ScoreBar score={assessment.overall_score} />
+        <ScoreBar score={safeAssessment.overall_score} />
 
-        <p className="text-sm text-muted-foreground mt-3">{assessment.explanation}</p>
+        <p className="text-sm text-muted-foreground mt-3">{safeAssessment.explanation}</p>
       </div>
 
       {/* Per-Layer Breakdown */}
       <div className="space-y-2">
-        {assessment.signals.map((signal) => (
+        {safeAssessment.signals.length === 0 ? (
+          <div className="card-premium rounded-xl p-4">
+            <p className="text-sm text-muted-foreground">No suspicious fraud layers were flagged for this claim.</p>
+          </div>
+        ) : safeAssessment.signals.map((signal) => (
           <LayerCard key={signal.layer} signal={signal} />
         ))}
       </div>

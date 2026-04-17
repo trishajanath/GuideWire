@@ -12,6 +12,8 @@ import {
   Crosshair,
   Zap,
   Wifi,
+  CreditCard,
+  Banknote,
   ChevronDown,
   FlaskConical,
   ShieldCheck,
@@ -23,9 +25,11 @@ import {
 import FraudBreakdown from "@/components/FraudBreakdown";
 import {
   evaluateClaimEngine,
+  processPayout,
   ZONES,
   type ClaimEvaluateResult,
   type FraudAssessment,
+  type PayoutTransaction,
 } from "@/lib/api";
 
 /* ── Scenario definitions ──────────────────────────────────────────── */
@@ -275,6 +279,7 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
   // Editable claim fields
   const [selectedZone, setSelectedZone] = useState(zoneId);
   const [spoofTarget, setSpoofTarget] = useState("bengaluru");
+  const [hoursLost, setHoursLost] = useState(0);
 
   const selectedZoneObj = ZONES.find((z) => z.id === selectedZone);
   const effectiveCity = selectedZoneObj?.city ?? city;
@@ -297,6 +302,10 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
   const [loading, setLoading] = useState(false);
   const [runCount, setRunCount] = useState(0);
   const [linkedTriggerScenarios, setLinkedTriggerScenarios] = useState<string[]>([]);
+  const [payoutTxn, setPayoutTxn] = useState<PayoutTransaction | null>(null);
+  const [processingPayout, setProcessingPayout] = useState(false);
+
+  const GATEWAYS = ["razorpay", "upi_direct", "stripe"] as const;
 
   useEffect(() => {
     const syncLinkedScenarios = () => {
@@ -373,6 +382,7 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
   const runClaim = async () => {
     setLoading(true);
     setResult(null);
+    setPayoutTxn(null);
 
     const selectedTriggerScenarios = readStoredTriggerScenarios();
     setLinkedTriggerScenarios(selectedTriggerScenarios);
@@ -402,7 +412,7 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
         city: effectiveCity,
         gps_lat: gps.lat,
         gps_lon: gps.lon,
-        hours_lost: 3,
+        hours_lost: Math.max(0, hoursLost),
         app_active: appActive,
         demo_mode: combinedScenarios.length > 0,
         demo_scenario: combinedScenarios[0] ?? demoScenario,
@@ -411,6 +421,29 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
         fraud_test_overrides: fraudOverrides,
       });
       setResult(res);
+
+      if (
+        (res.claim_status === "auto-approve" || res.claim_status === "approve-with-flag") &&
+        res.payout_amount > 0
+      ) {
+        setProcessingPayout(true);
+        try {
+          const gateway = GATEWAYS[Math.floor(Math.random() * GATEWAYS.length)];
+          const txn = await processPayout({
+            worker_id: workerId,
+            claim_id: `CLM-${Date.now()}`,
+            amount: res.payout_amount,
+            gateway,
+            upi_id: "worker@upi",
+          });
+          setPayoutTxn(txn);
+        } catch {
+          // payout processing failed silently — claim result remains visible
+        } finally {
+          setProcessingPayout(false);
+        }
+      }
+
       setRunCount((c) => c + 1);
     } catch {
       // Silently handle
@@ -420,6 +453,7 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
   };
 
   const fraudAssessment = result ? buildFraudAssessment(result) : null;
+  const firstFired = result?.trigger_list?.find((item) => item.fired);
 
   return (
     <div className="space-y-4">
@@ -450,6 +484,20 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
               onChange={(e) => { setSelectedZone(e.target.value); setResult(null); }}
               list="fraud-demo-zone-suggestions"
               placeholder="Type zone id or area"
+              className="w-full bg-secondary/60 border border-border/30 rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Lost hours</span>
+            <input
+              type="number"
+              min={0}
+              max={12}
+              value={hoursLost}
+              onChange={(e) => {
+                setHoursLost(Number(e.target.value || 0));
+                setResult(null);
+              }}
               className="w-full bg-secondary/60 border border-border/30 rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
             />
           </label>
@@ -664,6 +712,134 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
                   </li>
                 )}
               </ul>
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-border/60 bg-secondary/40 p-4">
+            <p className="text-sm font-bold text-foreground mb-3">Triggered categories</p>
+            <div className="space-y-2">
+              {result.trigger_list.filter((item) => item.fired).length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">No trigger fired.</p>
+              ) : (
+                result.trigger_list
+                  .filter((item) => item.fired)
+                  .map((item) => (
+                    <div key={`${item.category}_${item.name}`} className="rounded-xl bg-background/40 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-foreground">{item.name.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase())}</p>
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{item.category}</span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Source: {item.source} · Fired
+                      </p>
+                      {item.payout?.formula && <p className="text-[11px] text-muted-foreground mt-1">{item.payout.formula}</p>}
+                      {item.payout?.ml_future_loss_summary && (
+                        <p className="text-[11px] text-primary/90 mt-1">{item.payout.ml_future_loss_summary}</p>
+                      )}
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border/60 bg-secondary/40 p-4">
+            <p className="text-sm font-bold text-foreground mb-2">Total payout formula</p>
+            <p className="text-xs text-muted-foreground">
+              {result.trigger_list
+                .filter((item) => item.fired && item.payout)
+                .map((item) => item.payout?.formula)
+                .filter((formula): formula is string => Boolean(formula))
+                .join(" + ") || "No trigger fired"}
+            </p>
+            {(() => {
+              const firedWithPayout = result.trigger_list.filter((item) => item.fired && item.payout);
+              const probabilities = firedWithPayout
+                .map((item) => item.payout?.ml_future_loss_probability)
+                .filter((value): value is number => typeof value === "number");
+              if (probabilities.length === 0) return null;
+              const maxProbability = Math.max(...probabilities);
+              return (
+                <p className="text-[11px] text-primary/90 mt-2">
+                  ML outlook: {Math.round(maxProbability * 100)}% probability of future lost hours in the next disruption window.
+                </p>
+              );
+            })()}
+            <div className="flex items-center justify-between mt-3 pt-3 border-t border-border/40">
+              <span className="text-xs text-muted-foreground">Total payout</span>
+              <span className="text-base font-extrabold text-foreground">₹{result.payout_amount}</span>
+            </div>
+          </div>
+
+          {processingPayout && (
+            <div className="rounded-2xl border border-primary/20 bg-primary/[0.05] p-4 text-center animate-in fade-in-0 duration-300">
+              <Loader2 className="w-5 h-5 animate-spin text-primary mx-auto mb-2" />
+              <p className="text-sm font-semibold text-foreground">Processing instant payout…</p>
+              <p className="text-[11px] text-muted-foreground mt-1">Routing through payment gateway</p>
+            </div>
+          )}
+
+          {payoutTxn && (
+            <div className="rounded-2xl border border-accent-green/30 bg-accent-green/[0.05] p-4 space-y-3 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={16} className="text-accent-green" strokeWidth={1.5} />
+                <p className="text-sm font-bold text-foreground">Instant Payout Processed</p>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Gateway</span>
+                  <span className="text-[11px] font-semibold text-foreground flex items-center gap-1.5">
+                    {payoutTxn.gateway === "razorpay" ? (
+                      <><CreditCard size={12} className="text-blue-400" /> Razorpay (Test Mode)</>
+                    ) : payoutTxn.gateway === "upi_direct" ? (
+                      <><Banknote size={12} className="text-green-400" /> UPI Direct (NPCI)</>
+                    ) : (
+                      <><CreditCard size={12} className="text-purple-400" /> Stripe (Sandbox)</>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Transaction ID</span>
+                  <span className="text-[11px] font-mono text-foreground/70">{payoutTxn.txn_id}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Amount</span>
+                  <span className="text-sm font-bold text-accent-green">₹{payoutTxn.amount}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground">Status</span>
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${payoutTxn.status === "completed" ? "bg-accent-green/15 text-accent-green" : "bg-warning/15 text-warning"}`}>
+                    {payoutTxn.status.toUpperCase()}
+                  </span>
+                </div>
+                {payoutTxn.processing_time_ms != null && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground">Processing time</span>
+                    <span className="text-[11px] font-mono text-foreground/70">{payoutTxn.processing_time_ms}ms</span>
+                  </div>
+                )}
+                {payoutTxn.upi_ref && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground">UPI Reference</span>
+                    <span className="text-[11px] font-mono text-foreground/70">{payoutTxn.upi_ref}</span>
+                  </div>
+                )}
+                {payoutTxn.razorpay_payment_id && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground">Razorpay ID</span>
+                    <span className="text-[11px] font-mono text-foreground/70">{payoutTxn.razorpay_payment_id}</span>
+                  </div>
+                )}
+                {payoutTxn.stripe_transfer_id && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground">Stripe Transfer</span>
+                    <span className="text-[11px] font-mono text-foreground/70">{payoutTxn.stripe_transfer_id}</span>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center justify-center gap-1.5 pt-2 border-t border-accent-green/15">
+                <Zap size={12} className="text-accent-green" strokeWidth={1.5} />
+                <span className="text-[11px] font-bold text-accent-green">Worker receives lost wages instantly</span>
+              </div>
             </div>
           )}
 

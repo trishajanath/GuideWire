@@ -15,6 +15,50 @@ const TRIGGER_META: Record<string, { label: string; icon: typeof CloudRain }> = 
   zone_anomaly: { label: "Zone Anomaly", icon: MapPin },
 };
 
+const prettifyTriggerKey = (raw: string) =>
+  raw
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+
+const formatTriggerLabel = (triggerType?: string | null) => {
+  if (!triggerType) {
+    return "Claim";
+  }
+
+  const parts = triggerType
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return "Claim";
+  }
+
+  const labels = parts.map((part) => TRIGGER_META[part]?.label ?? prettifyTriggerKey(part));
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  return `${labels[0]} +${labels.length - 1}`;
+};
+
+const getTriggerLabels = (triggerType?: string | null) => {
+  if (!triggerType) {
+    return ["Claim"];
+  }
+
+  const parts = triggerType
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return ["Claim"];
+  }
+
+  return parts.map((part) => TRIGGER_META[part]?.label ?? prettifyTriggerKey(part));
+};
+
 const PayoutDetail = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -35,8 +79,9 @@ const PayoutDetail = () => {
     );
   }
 
-  const meta = TRIGGER_META[claim.trigger_type ?? ""] ?? { label: claim.trigger_type ?? "Claim", icon: AlertTriangle };
+  const meta = TRIGGER_META[claim.trigger_type ?? ""] ?? { label: formatTriggerLabel(claim.trigger_type), icon: AlertTriangle };
   const TriggerIcon = meta.icon;
+  const triggerLabels = getTriggerLabels(claim.trigger_type);
   const zoneName = ZONES.find((z) => z.id === claim.zone_id)?.area ?? claim.zone_id ?? "Unknown";
   const isApproved = claim.status === "approved";
   const isReview = claim.status === "under_review";
@@ -46,6 +91,8 @@ const PayoutDetail = () => {
   const ts = new Date(claim.timestamp);
   const dateStr = ts.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
   const timeStr = ts.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  const fraudSignals = Array.isArray(claim.fraud_details?.signals) ? claim.fraud_details.signals : [];
+  const hasFraudTriggered = fraudSignals.some((s) => (s?.score ?? 0) >= 0.3);
 
   return (
     <MobileShell>
@@ -130,26 +177,32 @@ const PayoutDetail = () => {
         <div className="bg-card rounded-xl p-5 shadow-card border border-border/40 mb-4">
           <h3 className="text-sm font-bold text-foreground mb-4">Trigger Details</h3>
           <div className="space-y-3">
-            <div className="flex items-center gap-3">
+            <div className="flex items-start gap-3">
               <TriggerIcon size={16} className="text-muted-foreground" strokeWidth={1.5} />
               <span className="text-sm text-muted-foreground">Event</span>
-              <span className="text-sm font-semibold text-foreground ml-auto">{meta.label}</span>
+              <div className="ml-auto min-w-0 max-w-[62%] text-right text-sm font-semibold text-foreground leading-snug">
+                {triggerLabels.map((label, idx) => (
+                  <p key={`${label}-${idx}`} className="whitespace-normal break-words">
+                    {label}
+                  </p>
+                ))}
+              </div>
             </div>
             <div className="flex items-center gap-3">
               <MapPin size={16} className="text-muted-foreground" strokeWidth={1.5} />
               <span className="text-sm text-muted-foreground">Zone</span>
-              <span className="text-sm font-semibold text-foreground ml-auto">{zoneName}</span>
+              <span className="ml-auto min-w-0 max-w-[58%] truncate text-right text-sm font-semibold text-foreground">{zoneName}</span>
             </div>
             <div className="flex items-center gap-3">
               <Clock size={16} className="text-muted-foreground" strokeWidth={1.5} />
               <span className="text-sm text-muted-foreground">Time</span>
-              <span className="text-sm font-semibold text-foreground ml-auto">{dateStr}, {timeStr}</span>
+              <span className="ml-auto min-w-0 max-w-[58%] truncate text-right text-sm font-semibold text-foreground">{dateStr}, {timeStr}</span>
             </div>
           </div>
         </div>
 
         {/* 5-Layer Fraud Analysis */}
-        {claim.fraud_details && (
+        {claim.fraud_details && hasFraudTriggered && (
           <div className="mb-6">
             <FraudBreakdown assessment={claim.fraud_details} compact={!showFraudDetails} />
             <button

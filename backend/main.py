@@ -294,6 +294,9 @@ mock_rainfall_by_city = {
     "nagpur": 12,
 }
 rainfall_threshold_mm = 30
+AUTO_CLAIM_RISK_THRESHOLD = int(os.getenv("AUTO_CLAIM_RISK_THRESHOLD", "60"))
+AUTO_CLAIM_DEFAULT_HOURS_LOST = float(os.getenv("AUTO_CLAIM_DEFAULT_HOURS_LOST", "1.0"))
+AUTO_CLAIM_COOLDOWN_MINUTES = int(os.getenv("AUTO_CLAIM_COOLDOWN_MINUTES", "180"))
 
 
 def _is_real_user(user: dict) -> bool:
@@ -642,6 +645,7 @@ async def fetch_weather_for_zone(zone_id: str, city_query: str) -> RawWeatherEve
 async def ingest_weather_events_job() -> None:
     for zone_id, city_query in ZONE_CONFIG.items():
         await fetch_weather_for_zone(zone_id=zone_id, city_query=city_query)
+    await auto_create_claims_for_risk_crossing_job()
 
 
 @app.on_event("startup")
@@ -762,7 +766,7 @@ class ClaimEvaluateRequest(BaseModel):
     city: str = Field(..., min_length=1)
     gps_lat: float
     gps_lon: float
-    hours_lost: float = Field(..., gt=0)
+    hours_lost: float = Field(..., ge=0)
     app_active: bool = True
     event_timestamp: datetime | None = None
     demo_mode: bool = False
@@ -809,7 +813,7 @@ class AutoTriggerSimulationRequest(BaseModel):
     worker_id: int = Field(..., ge=1)
     city: str = Field(..., min_length=1)
     zone_id: str | None = None
-    hours_lost: float = Field(default=3.0, gt=0)
+    hours_lost: float = Field(default=0.0, ge=0)
     app_active: bool = True
     seed: int | None = None
 
@@ -1140,6 +1144,155 @@ def _claim_severity_multiplier(trigger_name: str, *, demand_drop_pct: float | No
     return _severity_for_trigger(trigger_name, demand_drop_pct=demand_drop_pct)
 
 
+def _zone_id_for_user(user: dict) -> str:
+    explicit_zone_id = str(user.get("zone_id") or "").strip().lower()
+    if explicit_zone_id:
+        return explicit_zone_id
+
+    city = _normalize_city_display(str(user.get("city") or "Bengaluru"))
+    zone_area = str(user.get("zone_area") or "").strip()
+    if zone_area:
+        return _zone_slug(city, zone_area)
+    return city.strip().lower()
+
+
+def _has_recent_auto_threshold_claim(worker_id: int, now_utc: datetime) -> bool:
+    cooldown_start = now_utc - timedelta(minutes=AUTO_CLAIM_COOLDOWN_MINUTES)
+    for claim in reversed(claims):
+        if claim.get("user_id") != worker_id:
+            continue
+        timestamp = claim.get("timestamp")
+        if not isinstance(timestamp, datetime):
+            continue
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        else:
+            timestamp = timestamp.astimezone(timezone.utc)
+        if timestamp < cooldown_start:
+            break
+        trigger_tokens = {
+            token.strip().lower()
+            for token in str(claim.get("trigger_type") or "").split(",")
+            if token.strip()
+        }
+        if "auto_risk_threshold" in trigger_tokens:
+            return True
+    return False
+
+
+async def auto_create_claims_for_risk_crossing_job() -> None:
+    if not users:
+        return
+
+    now_utc = datetime.now(timezone.utc)
+    city_weather_cache: dict[str, dict | None] = {}
+    claims_created = 0
+    touched_user_state = False
+
+    for user_id, user in users.items():
+        if not _is_real_user(user):
+            continue
+
+        policy = _ensure_policy(user_id)
+        if str(policy.get("status") or "").lower() != "active":
+            continue
+
+        city = _normalize_city_display(str(user.get("city") or "Bengaluru"))
+        zone_area = str(user.get("zone_area") or city).strip() or city
+
+        if city not in city_weather_cache:
+            payload = await fetch_openweather_payload(city)
+            city_weather_cache[city] = build_city_weather_response(city, payload) if payload is not None else None
+
+        city_weather = city_weather_cache[city]
+        if city_weather is None:
+            continue
+
+        zone_weather = _zone_weather_risk_from_city_response(city_weather, city, zone_area)
+        weather_risk_score = int(zone_weather.get("weather_risk_score", 0))
+        trigger_probability = float(zone_weather.get("trigger_probability", 0.0))
+        trigger_type = str(zone_weather.get("trigger_type") or "weather")
+
+        previous_score = user.get("auto_claim_last_risk_score")
+        crossed_threshold = weather_risk_score > AUTO_CLAIM_RISK_THRESHOLD and (
+            previous_score is None or float(previous_score) <= AUTO_CLAIM_RISK_THRESHOLD
+        )
+
+        user["auto_claim_last_risk_score"] = weather_risk_score
+        user["last_trigger_status"] = weather_risk_score > AUTO_CLAIM_RISK_THRESHOLD
+        user["last_trigger_type"] = trigger_type if weather_risk_score > AUTO_CLAIM_RISK_THRESHOLD else None
+        user["last_trigger_severity"] = 1 if weather_risk_score > AUTO_CLAIM_RISK_THRESHOLD else 0
+        touched_user_state = True
+
+        if not crossed_threshold:
+            continue
+
+        if _has_recent_auto_threshold_claim(user_id, now_utc):
+            continue
+
+        zone_id = _zone_id_for_user(user)
+        plan_details = _claim_plan_details(user, policy)
+        hourly_rate = float(plan_details.get("hourly_rate", plans["Standard"]["hourly_rate"]))
+        daily_cap = float(plan_details.get("daily_cap", plans["Standard"]["daily_cap"]))
+        multiplier = _claim_severity_multiplier(trigger_type)
+
+        coverage_hours = adjust_coverage_hours(
+            lost_hours=max(0.0, AUTO_CLAIM_DEFAULT_HOURS_LOST),
+            weather_risk_score=weather_risk_score,
+            trigger_probability=trigger_probability,
+        )
+        adjusted_hours = float(coverage_hours["adjusted_hours"])
+        coverage_hour_adjustment = float(coverage_hours["coverage_hour_adjustment"])
+
+        activity_data = ZONE_ACTIVITY_DATA.get(
+            zone_id,
+            {"active_workers": 40, "idle_workers": 10, "avg_distance": 3.5},
+        )
+        anomaly_score = float(calculate_zone_activity_score(activity_data).get("anomaly_score", 0.0))
+
+        fraud_result = calculate_fraud_score(
+            user_id=user_id,
+            zone_id=zone_id,
+            weather_risk=weather_risk_score,
+            anomaly_score=anomaly_score,
+            trigger_active=True,
+        )
+        fraud_score = float(fraud_result.get("overall_score", 0.0))
+        claim_status = "auto-approve" if bool(fraud_result.get("allow_payout", True)) else "hold-for-review"
+
+        raw_payout = adjusted_hours * hourly_rate * multiplier
+        payout_amount = round(min(raw_payout, daily_cap), 2) if claim_status == "auto-approve" else 0.0
+
+        claims.append(
+            {
+                "user_id": user_id,
+                "timestamp": now_utc,
+                "fraud_score": round(fraud_score, 3),
+                "fraud_details": fraud_result,
+                "status": claim_status,
+                "trigger_type": f"{trigger_type},auto_risk_threshold",
+                "payout_amount": payout_amount,
+                "zone_id": zone_id,
+                "hours_lost": max(0.0, AUTO_CLAIM_DEFAULT_HOURS_LOST),
+                "adjusted_hours": adjusted_hours,
+                "coverage_hour_adjustment": coverage_hour_adjustment,
+                "hourly_rate": hourly_rate,
+                "multiplier": multiplier,
+            }
+        )
+        claims_created += 1
+
+    if touched_user_state or claims_created > 0:
+        _persist_runtime_state()
+
+    if claims_created > 0:
+        logger.info(
+            "Auto-created %s claim(s) after risk crossed threshold %s for active policies",
+            claims_created,
+            AUTO_CLAIM_RISK_THRESHOLD,
+        )
+
+
 def _demo_fraud_score_from_scenarios(scenarios: list[str]) -> float:
     """Calibrate demo fraud score from selected trigger scenarios.
 
@@ -1453,20 +1606,26 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
         eff_vpn = fto.get("force_vpn", False) if fto else vpn_detected
 
         if fired:
-            fraud_score, breakdown = _trigger_fraud_breakdown(
-                gps_in_zone=eff_gps,
-                app_active=eff_app,
-                zone_worker_ratio=zone_ratio,
-                duplicate_claim=eff_duplicate,
-                claim_frequency_ratio=eff_frequency if isinstance(eff_frequency, float) else (1.0 if eff_frequency else 0.0),
-                vpn_detected=eff_vpn,
-            )
-            fraud_decision = _format_fraud_decision(fraud_score)
-            fraud_response = TriggerFraudResponse(
-                score=fraud_score,
-                breakdown=[TriggerFraudBreakdownItem(**item) for item in breakdown],
-                decision=fraud_decision,
-            )
+            # Fraud scoring should only run when explicit fraud spoof toggles are enabled.
+            # Otherwise keep fraud neutral and non-blocking.
+            if demo_has_fraud_overrides:
+                fraud_score, breakdown = _trigger_fraud_breakdown(
+                    gps_in_zone=eff_gps,
+                    app_active=eff_app,
+                    zone_worker_ratio=zone_ratio,
+                    duplicate_claim=eff_duplicate,
+                    claim_frequency_ratio=eff_frequency if isinstance(eff_frequency, float) else (1.0 if eff_frequency else 0.0),
+                    vpn_detected=eff_vpn,
+                )
+                fraud_decision = _format_fraud_decision(fraud_score)
+                fraud_response = TriggerFraudResponse(
+                    score=fraud_score,
+                    breakdown=[TriggerFraudBreakdownItem(**item) for item in breakdown],
+                    decision=fraud_decision,
+                )
+            else:
+                fraud_score = 0.0
+                fraud_response = None
 
             if spec["name"] == "demand_collapse":
                 severity_multiplier = _claim_severity_multiplier("demand_collapse", demand_drop_pct=float(spec["value"]))
@@ -1570,6 +1729,22 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             f"{len(fired_triggers)} trigger(s) fired. Fraud score maxed at {round(highest_fraud, 3)} and claim was {claim_status}."
         )
 
+    history_trigger_names: list[str] = [item.name for item in fired_triggers]
+    if payload.demo_mode and applied_scenarios:
+        history_trigger_names.extend(applied_scenarios)
+    if demo_has_fraud_overrides and payload.fraud_test_overrides:
+        fto = payload.fraud_test_overrides
+        if fto.get("force_gps_fail", False):
+            history_trigger_names.append("gps_spoof")
+        if fto.get("force_app_inactive", False):
+            history_trigger_names.append("app_inactive")
+        if fto.get("force_duplicate", False):
+            history_trigger_names.append("duplicate")
+        if fto.get("force_vpn", False):
+            history_trigger_names.append("vpn_proxy")
+
+    deduped_history_triggers = list(dict.fromkeys(history_trigger_names))
+
     claims.append(
         {
             "user_id": payload.worker_id,
@@ -1580,7 +1755,7 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
                 "overall_score": round(highest_fraud, 3),
                 "decision": claim_status,
             },
-            "trigger_type": ",".join(item.name for item in fired_triggers) if fired_triggers else None,
+            "trigger_type": ",".join(deduped_history_triggers) if deduped_history_triggers else None,
             "payout_amount": payout_amount,
             "zone_id": payload.zone_id,
             "hours_lost": payload.hours_lost,

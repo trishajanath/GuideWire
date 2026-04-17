@@ -19,6 +19,33 @@ const fmtDate = (iso: string) => {
   return d.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
 };
 
+const prettifyTriggerKey = (raw: string) =>
+  raw
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+
+const formatTriggerLabel = (triggerType?: string | null) => {
+  if (!triggerType) {
+    return "Claim";
+  }
+
+  const parts = triggerType
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return "Claim";
+  }
+
+  const labels = parts.map((part) => TRIGGER_META[part]?.label ?? prettifyTriggerKey(part));
+  if (labels.length === 1) {
+    return labels[0];
+  }
+  return `${labels[0]} +${labels.length - 1}`;
+};
+
 const Payouts = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
@@ -92,7 +119,7 @@ const Payouts = () => {
         ) : (
           <div className="space-y-3">
             {[...claims].reverse().map((c) => {
-              const meta = TRIGGER_META[c.trigger_type ?? ""] ?? { label: c.trigger_type ?? "Claim", icon: AlertTriangle };
+              const meta = TRIGGER_META[c.trigger_type ?? ""] ?? { label: formatTriggerLabel(c.trigger_type), icon: AlertTriangle };
               const Icon = meta.icon;
               return (
                 <button
@@ -102,7 +129,7 @@ const Payouts = () => {
                 >
                   <Icon size={18} className={isPaid(c.status) ? "text-accent-green flex-shrink-0" : "text-muted-foreground flex-shrink-0"} strokeWidth={1.5} />
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-bold text-foreground">{meta.label}</h3>
+                    <h3 className="text-sm font-bold text-foreground truncate">{meta.label}</h3>
                     <p className="text-xs text-muted-foreground">
                       {fmtDate(c.timestamp)}{" "}
                       <span className={`ml-1 ${isPaid(c.status) ? "text-accent-green" : c.status === "under_review" ? "text-warning" : "text-muted-foreground"}`}>
@@ -110,7 +137,7 @@ const Payouts = () => {
                       </span>
                     </p>
                   </div>
-                  <span className={`text-base font-extrabold ${isPaid(c.status) ? "text-accent-green" : "text-muted-foreground"}`}>
+                  <span className={`ml-2 shrink-0 text-base font-extrabold tabular-nums ${isPaid(c.status) ? "text-accent-green" : "text-muted-foreground"}`}>
                     {isPaid(c.status) ? "+" : ""}₹{Math.round(c.payout_amount)}
                   </span>
                 </button>
