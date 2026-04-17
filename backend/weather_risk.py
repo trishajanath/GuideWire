@@ -15,6 +15,7 @@ def _rule_based_weather_risk(data: dict) -> dict:
     temperature = float(data.get("temperature", 0.0))
     humidity = float(data.get("humidity", 0.0))
     wind_speed = float(data.get("wind_speed", 0.0))
+    aqi = float(data.get("aqi") or 0.0)
 
     # Graduated components (normal weather still yields a low non-zero score).
     risk_score += min(rainfall * 1.2, 35.0)
@@ -38,6 +39,12 @@ def _rule_based_weather_risk(data: dict) -> dict:
     if wind_speed > 40:
         risk_score += 15
         breached_rules.append(("high_wind", 20))
+
+    if aqi > 300:
+        risk_score += 18
+        breached_rules.append(("severe_aqi", 35))
+    elif aqi > 200:
+        risk_score += 8
 
     normalized_score = max(0, min(int(round(risk_score)), 100))
     trigger_probability = round(normalized_score / 100.0, 2)

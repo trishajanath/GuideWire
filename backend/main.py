@@ -205,6 +205,10 @@ try:
         get_worker_transactions,
         get_all_transactions,
         get_transaction_stats,
+        create_upi_mandate,
+        execute_mandate_debit,
+        get_worker_mandate,
+        revoke_mandate,
     )
 except ImportError:
     from payment_gateway import (
@@ -213,6 +217,10 @@ except ImportError:
         get_worker_transactions,
         get_all_transactions,
         get_transaction_stats,
+        create_upi_mandate,
+        execute_mandate_debit,
+        get_worker_mandate,
+        revoke_mandate,
     )
 
 try:
@@ -308,6 +316,23 @@ ZONE_CONFIG: dict[str, str] = {
     "coimbatore_race_course": "Coimbatore,IN",
 }
 
+# Hyper-local zone coordinates for lat/lon-based weather queries
+# (per municipal ward / delivery micro-zone — minimises basis risk).
+ZONE_COORDS: dict[str, tuple[float, float]] = {
+    "koramangala_blr": (12.9352, 77.6245),
+    "indiranagar_blr": (12.9784, 77.6408),
+    "whitefield_blr": (12.9698, 77.7500),
+    "hsr_layout_blr": (12.9116, 77.6472),
+    "electronic_city_blr": (12.8456, 77.6603),
+    "coimbatore_gandhipuram": (11.0168, 76.9558),
+    "coimbatore_rs_puram": (11.0120, 76.9490),
+    "coimbatore_peelamedu": (11.0250, 77.0020),
+    "coimbatore_saibaba_colony": (11.0210, 76.9650),
+    "coimbatore_race_course": (11.0008, 76.9620),
+}
+
+OPENWEATHER_AQI_URL = "https://api.openweathermap.org/data/2.5/air_pollution"
+
 ZONE_DISPLAY_MAP: dict[str, tuple[str, str]] = {
     "koramangala_blr": ("Bengaluru", "Koramangala"),
     "indiranagar_blr": ("Bengaluru", "Indiranagar"),
@@ -368,6 +393,7 @@ rainfall_threshold_mm = 30
 AUTO_CLAIM_RISK_THRESHOLD = int(os.getenv("AUTO_CLAIM_RISK_THRESHOLD", "60"))
 AUTO_CLAIM_DEFAULT_HOURS_LOST = float(os.getenv("AUTO_CLAIM_DEFAULT_HOURS_LOST", "1.0"))
 AUTO_CLAIM_COOLDOWN_MINUTES = int(os.getenv("AUTO_CLAIM_COOLDOWN_MINUTES", "180"))
+MAX_CLAIMS_PER_WEEK = int(os.getenv("MAX_CLAIMS_PER_WEEK", "5"))
 
 
 def _is_real_user(user: dict) -> bool:
@@ -527,6 +553,7 @@ class RawWeatherEvent(BaseModel):
     rainfall: float = Field(..., ge=0)
     humidity: float = Field(..., ge=0)
     wind_speed: float = Field(..., ge=0)
+    aqi: float | None = None  # India-AQI (CPCB scale) from PM2.5
     timestamp: datetime
 
 
@@ -626,6 +653,25 @@ def create_raw_event_repository() -> RawWeatherEventRepository:
 raw_event_repository: RawWeatherEventRepository = create_raw_event_repository()
 
 
+def _pm25_to_india_aqi(pm25: float) -> float:
+    """Convert PM2.5 µg/m³ to India-AQI (CPCB National Air Quality Index breakpoints)."""
+    # CPCB AQI breakpoints for PM2.5 (24-hr avg, µg/m³):
+    #   Good 0-30 → 0-50, Satisfactory 31-60 → 51-100, Moderate 61-90 → 101-200,
+    #   Poor 91-120 → 201-300, Very Poor 121-250 → 301-400, Severe 250+ → 401-500
+    breakpoints = [
+        (0, 30, 0, 50),
+        (30, 60, 50, 100),
+        (60, 90, 100, 200),
+        (90, 120, 200, 300),
+        (120, 250, 300, 400),
+        (250, 500, 400, 500),
+    ]
+    for c_lo, c_hi, i_lo, i_hi in breakpoints:
+        if pm25 <= c_hi:
+            return round(((i_hi - i_lo) / (c_hi - c_lo)) * (pm25 - c_lo) + i_lo, 1)
+    return 500.0  # Severe+
+
+
 def _build_weather_event(zone_id: str, payload: dict) -> RawWeatherEvent:
     weather = payload.get("weather") or []
     weather_main = weather[0].get("main", "") if weather else ""
@@ -668,6 +714,23 @@ async def fetch_openweather_payload(city_query: str) -> dict | None:
         return None
 
 
+async def _fetch_openweather_by_coords(lat: float, lon: float) -> dict | None:
+    """Fetch weather using exact lat/lon for hyper-local (municipal-ward-level) data."""
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "appid": OPENWEATHER_API_KEY,
+        "units": "metric",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(OPENWEATHER_URL, params=params)
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPError:
+        return None
+
+
 def build_city_weather_response(city_query: str, payload: dict) -> dict:
     event = _build_weather_event(city_query, payload)
     risk = calculate_weather_risk(
@@ -695,11 +758,22 @@ def build_city_weather_response(city_query: str, payload: dict) -> dict:
 
 
 async def fetch_weather_for_zone(zone_id: str, city_query: str) -> RawWeatherEvent | None:
-    params = {
-        "q": city_query,
-        "appid": OPENWEATHER_API_KEY,
-        "units": "metric",
-    }
+    coords = ZONE_COORDS.get(zone_id)
+
+    # Prefer hyper-local lat/lon query; fall back to city name.
+    if coords:
+        params = {
+            "lat": coords[0],
+            "lon": coords[1],
+            "appid": OPENWEATHER_API_KEY,
+            "units": "metric",
+        }
+    else:
+        params = {
+            "q": city_query,
+            "appid": OPENWEATHER_API_KEY,
+            "units": "metric",
+        }
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -710,6 +784,26 @@ async def fetch_weather_for_zone(zone_id: str, city_query: str) -> RawWeatherEve
         return None
 
     event = _build_weather_event(zone_id, payload)
+
+    # ── Fetch AQI for this zone's coordinates (CPCB-equivalent via OpenWeather) ──
+    if coords:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                aqi_resp = await client.get(
+                    OPENWEATHER_AQI_URL,
+                    params={"lat": coords[0], "lon": coords[1], "appid": OPENWEATHER_API_KEY},
+                )
+                aqi_resp.raise_for_status()
+                aqi_data = aqi_resp.json()
+                aqi_list = aqi_data.get("list", [])
+                if aqi_list:
+                    components = aqi_list[0].get("components", {})
+                    # Derive India-AQI-equivalent from PM2.5 using CPCB breakpoints
+                    pm25 = components.get("pm2_5", 0.0)
+                    event.aqi = _pm25_to_india_aqi(pm25)
+        except httpx.HTTPError:
+            pass
+
     return raw_event_repository.insert(event)
 
 
@@ -979,6 +1073,37 @@ CLAIM_ZONE_CENTERS: dict[str, tuple[float, float]] = {
 
 CLAIM_ZONE_SHUTDOWN_ZONES = {"mumbai", "chennai", "kolkata", "kochi"}
 CLAIM_PLATFORM_DEGRADED_ZONES = {"mumbai", "kolkata", "delhi"}
+
+# ── Adverse Selection Lockout ──────────────────────────────────────────────
+# Block new enrollment / plan purchase when an active IMD orange/red alert
+# exists for the worker's city within the last 48 hours.
+ADVERSE_SELECTION_LOCKOUT_HOURS = 48
+
+def _check_adverse_selection_lockout(city: str) -> dict | None:
+    """Return lockout info dict if enrollment is blocked, else None."""
+    alert = get_latest_imd_alert(city)
+    if alert is None:
+        return None
+    if alert["alert_level"] not in ("orange", "red"):
+        return None
+    try:
+        alert_ts = datetime.fromisoformat(alert["timestamp"])
+        if alert_ts.tzinfo is None:
+            alert_ts = alert_ts.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ADVERSE_SELECTION_LOCKOUT_HOURS)
+    if alert_ts < cutoff:
+        return None
+    return {
+        "locked": True,
+        "reason": (
+            f"Enrollment temporarily blocked — active IMD {alert['alert_level'].upper()} "
+            f"alert ({alert['event_type']}) in {city.title()} issued at {alert['timestamp']}. "
+            f"Please wait {ADVERSE_SELECTION_LOCKOUT_HOURS}h after alert clearance."
+        ),
+        "alert": alert,
+    }
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -1274,7 +1399,13 @@ async def auto_create_claims_for_risk_crossing_job() -> None:
         zone_area = str(user.get("zone_area") or city).strip() or city
 
         if city not in city_weather_cache:
-            payload = await fetch_openweather_payload(city)
+            # Use zone-level lat/lon coordinates for hyper-local weather when available
+            zone_id_for_fetch = _zone_id_for_user(user)
+            coords = ZONE_COORDS.get(zone_id_for_fetch)
+            if coords:
+                payload = await _fetch_openweather_by_coords(coords[0], coords[1])
+            else:
+                payload = await fetch_openweather_payload(city)
             city_weather_cache[city] = build_city_weather_response(city, payload) if payload is not None else None
 
         city_weather = city_weather_cache[city]
@@ -2294,6 +2425,7 @@ class TriggerWeatherInput(BaseModel):
     visibility_meters: float | None = Field(default=None, ge=0)
     urban_flooding: bool = False
     imd_alert_level: Literal["none", "yellow", "orange", "red"] = "none"
+    aqi: float | None = Field(default=None, ge=0, description="India-AQI (CPCB scale). >300 = severe.")
 
 
 class TriggerPlatformInput(BaseModel):
@@ -2817,6 +2949,15 @@ def register_user(payload: RegistrationRequest):
     return {"user_id": user_id}
 
 
+@app.get("/api/enrollment-lockout")
+def check_enrollment_lockout(city: str):
+    """Check if enrollment is blocked due to an active IMD orange/red alert."""
+    lockout = _check_adverse_selection_lockout(city.strip().lower())
+    if lockout is not None:
+        return lockout
+    return {"locked": False}
+
+
 @app.get("/login/phone")
 def login_by_phone(phone: str):
     normalized_phone = _normalize_phone(phone)
@@ -2849,6 +2990,12 @@ def select_plan(payload: PlanSelectionRequest):
     user = users.get(payload.user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # ── Adverse selection lockout ──────────────────────────────────
+    city = (user.get("city") or "").strip().lower()
+    lockout = _check_adverse_selection_lockout(city)
+    if lockout is not None:
+        raise HTTPException(status_code=403, detail=lockout["reason"])
 
     user["selected_plan"] = payload.selected_plan
     plan_details = calculate_premium(user)
@@ -3112,6 +3259,7 @@ def evaluate_trigger_endpoint(payload: TriggerEvaluateRequest):
         visibility_meters=payload.weather.visibility_meters,
         urban_flooding=payload.weather.urban_flooding,
         imd_alert_level=payload.weather.imd_alert_level,
+        aqi=payload.weather.aqi,
         current_orders=payload.platform.current_orders,
         average_orders=payload.platform.average_orders,
         orders_in_3_hours=payload.platform.orders_last_3_hours,
@@ -3686,6 +3834,72 @@ def get_worker_payouts(worker_id: int):
 def get_payout_stats():
     """Aggregate payout statistics across all gateways."""
     return get_transaction_stats()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UPI AutoPay Mandate — Frictionless Premium Collection
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/mandate/create")
+def create_mandate_endpoint(worker_id: int, upi_id: str, plan: str = "basic"):
+    """Set up UPI AutoPay mandate for recurring weekly premium deduction."""
+    user = users.get(worker_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    plan_amounts = {"basic": 49.0, "standard": 69.0, "premium": 99.0}
+    max_amount = plan_amounts.get(plan, 49.0)
+
+    mandate = create_upi_mandate(
+        worker_id=worker_id,
+        upi_id=upi_id,
+        max_amount=max_amount,
+        frequency="weekly",
+    )
+    user["mandate_id"] = mandate.mandate_id
+    user["premium_autopay"] = True
+    _persist_runtime_state()
+
+    return {
+        "mandate": mandate.to_dict(),
+        "message": f"UPI AutoPay activated — ₹{max_amount}/week will be auto-debited from {upi_id}",
+    }
+
+
+@app.get("/api/mandate/{worker_id}")
+def get_mandate_endpoint(worker_id: int):
+    """Get active UPI AutoPay mandate for a worker."""
+    mandate = get_worker_mandate(worker_id)
+    if mandate is None:
+        return {"active": False, "mandate": None}
+    return {"active": True, "mandate": mandate.to_dict()}
+
+
+@app.post("/api/mandate/{worker_id}/debit")
+def debit_premium_endpoint(worker_id: int):
+    """Execute a weekly premium debit against worker's active mandate."""
+    mandate = get_worker_mandate(worker_id)
+    if mandate is None:
+        raise HTTPException(status_code=404, detail="No active mandate — set up UPI AutoPay first")
+
+    txn = execute_mandate_debit(worker_id, mandate.max_amount)
+    if txn is None:
+        raise HTTPException(status_code=400, detail="Debit failed — mandate inactive or amount exceeded")
+
+    return {"transaction": txn.to_dict(), "message": f"₹{mandate.max_amount} debited via UPI AutoPay"}
+
+
+@app.delete("/api/mandate/{worker_id}")
+def revoke_mandate_endpoint(worker_id: int):
+    """Revoke UPI AutoPay mandate."""
+    success = revoke_mandate(worker_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="No active mandate found")
+    user = users.get(worker_id)
+    if user:
+        user["premium_autopay"] = False
+        _persist_runtime_state()
+    return {"revoked": True}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -73,6 +73,7 @@ class PaymentGateway(str, Enum):
     RAZORPAY = "razorpay"
     UPI = "upi_direct"
     STRIPE = "stripe"
+    UPI_AUTOPAY = "upi_autopay"
 
 
 class PayoutStatus(str, Enum):
@@ -80,6 +81,47 @@ class PayoutStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class MandateStatus(str, Enum):
+    CREATED = "created"
+    AUTHORIZED = "authorized"
+    ACTIVE = "active"
+    PAUSED = "paused"
+    REVOKED = "revoked"
+
+
+@dataclass
+class UPIMandate:
+    """UPI AutoPay / e-mandate for recurring premium collection."""
+    mandate_id: str
+    worker_id: int
+    upi_id: str
+    max_amount: float  # max debit per cycle (e.g. ₹99)
+    frequency: str  # "weekly" | "monthly"
+    status: MandateStatus = MandateStatus.CREATED
+    start_date: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    end_date: datetime | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    razorpay_mandate_id: str | None = None
+    npci_mandate_ref: str | None = None
+    metadata: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "mandate_id": self.mandate_id,
+            "worker_id": self.worker_id,
+            "upi_id": self.upi_id,
+            "max_amount": self.max_amount,
+            "frequency": self.frequency,
+            "status": self.status.value,
+            "start_date": self.start_date.isoformat(),
+            "end_date": self.end_date.isoformat() if self.end_date else None,
+            "created_at": self.created_at.isoformat(),
+            "razorpay_mandate_id": self.razorpay_mandate_id,
+            "npci_mandate_ref": self.npci_mandate_ref,
+            "metadata": self.metadata,
+        }
 
 
 @dataclass
@@ -475,3 +517,115 @@ def get_transaction_stats() -> dict:
         "avg_processing_time_ms": round(sum(processing_times) / len(processing_times), 0) if processing_times else 0,
         "by_gateway": by_gateway,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# UPI AutoPay Mandate — Frictionless Premium Collection
+# ═══════════════════════════════════════════════════════════════════════════
+# Simulates NPCI UPI Mandate (e-mandate) flow:
+#   1. Worker authorises via UPI PIN → mandate CREATED → AUTHORIZED → ACTIVE
+#   2. Platform debits weekly ₹49/69/99 automatically (no worker action)
+#   3. Worker can pause/revoke any time
+#
+# In production: Razorpay Subscriptions API or NPCI UPI Mandate API.
+# ═══════════════════════════════════════════════════════════════════════════
+
+_mandate_store: dict[str, UPIMandate] = {}  # mandate_id → UPIMandate
+_worker_mandates: dict[int, str] = {}       # worker_id → active mandate_id
+
+
+def create_upi_mandate(
+    *,
+    worker_id: int,
+    upi_id: str,
+    max_amount: float,
+    frequency: str = "weekly",
+) -> UPIMandate:
+    """
+    Create and auto-authorise a UPI AutoPay mandate (simulated).
+    In production: POST https://api.razorpay.com/v1/subscriptions
+    """
+    mandate_id = f"FR-MND-{secrets.token_hex(6).upper()}"
+    now = datetime.now(timezone.utc)
+
+    mandate = UPIMandate(
+        mandate_id=mandate_id,
+        worker_id=worker_id,
+        upi_id=upi_id,
+        max_amount=max_amount,
+        frequency=frequency,
+        status=MandateStatus.ACTIVE,  # auto-authorised in simulation
+        start_date=now,
+        end_date=now + timedelta(days=365),
+        created_at=now,
+        razorpay_mandate_id=f"sub_{secrets.token_hex(10)}",
+        npci_mandate_ref=f"NPCI-MND-{secrets.randbelow(10**12):012d}",
+        metadata={
+            "payer_vpa": upi_id,
+            "payee_vpa": "fairroute.premium@icici",
+            "mandate_type": "RECURRING",
+            "debit_day": "monday",
+            "purpose": "14",  # NPCI purpose code for insurance premium
+        },
+    )
+
+    _mandate_store[mandate_id] = mandate
+    _worker_mandates[worker_id] = mandate_id
+    return mandate
+
+
+def execute_mandate_debit(
+    worker_id: int,
+    amount: float,
+) -> PayoutTransaction | None:
+    """
+    Execute a recurring debit against the worker's active mandate.
+    Returns a PayoutTransaction (debit direction) or None if no active mandate.
+    """
+    mandate_id = _worker_mandates.get(worker_id)
+    if mandate_id is None:
+        return None
+    mandate = _mandate_store.get(mandate_id)
+    if mandate is None or mandate.status != MandateStatus.ACTIVE:
+        return None
+    if amount > mandate.max_amount:
+        return None
+
+    txn = PayoutTransaction(
+        txn_id=_generate_txn_id(),
+        gateway=PaymentGateway.UPI_AUTOPAY,
+        worker_id=worker_id,
+        claim_id=f"premium-debit-{mandate_id}",
+        amount=amount,
+        upi_id=mandate.upi_id,
+        upi_ref=_generate_upi_ref(),
+        status=PayoutStatus.COMPLETED,
+        completed_at=datetime.now(timezone.utc) + timedelta(milliseconds=300),
+        metadata={
+            "mandate_id": mandate_id,
+            "direction": "DEBIT",
+            "type": "premium_collection",
+            "npci_mandate_ref": mandate.npci_mandate_ref,
+        },
+    )
+    transaction_repository.save(txn)
+    return txn
+
+
+def get_worker_mandate(worker_id: int) -> UPIMandate | None:
+    mandate_id = _worker_mandates.get(worker_id)
+    if mandate_id is None:
+        return None
+    return _mandate_store.get(mandate_id)
+
+
+def revoke_mandate(worker_id: int) -> bool:
+    mandate_id = _worker_mandates.get(worker_id)
+    if mandate_id is None:
+        return False
+    mandate = _mandate_store.get(mandate_id)
+    if mandate is None:
+        return False
+    mandate.status = MandateStatus.REVOKED
+    del _worker_mandates[worker_id]
+    return True

@@ -43,6 +43,14 @@ def _trigger_metadata() -> list[dict[str, object]]:
             "severity_multiplier": 1.1,
             "payout_activation": "Automatic",
         },
+        {
+            "trigger": "severe_aqi",
+            "category": "weather",
+            "threshold": ">300 AQI (CPCB 'Severe' band)",
+            "data_sources": ["CPCB", "OpenWeather Air Pollution"],
+            "severity_multiplier": 1.25,
+            "payout_activation": "Automatic",
+        },
     ]
 
 
@@ -91,6 +99,14 @@ def check_demand_drop_trigger(current_orders: int, average_orders: float) -> dic
 
     breached = current_orders < (0.6 * average_orders)
     return _build_response("demand_drop", breached, current_orders)
+
+
+def check_aqi_trigger(aqi: float | int | None) -> dict:
+    """Trigger when AQI exceeds 300 (CPCB 'Severe' band)."""
+    if aqi is None:
+        return _build_response("severe_aqi", False, 0)
+    breached = float(aqi) > 300
+    return _build_response("severe_aqi", breached, aqi)
 
 
 def check_order_allocation_pause_trigger(orders_in_3_hours: int) -> dict:
@@ -200,6 +216,7 @@ def evaluate_trigger_pipeline(
     visibility_meters: float | None = None,
     urban_flooding: bool = False,
     imd_alert_level: str = "none",
+    aqi: float | int | None = None,
     current_orders: int,
     average_orders: float,
     orders_in_3_hours: int,
@@ -218,6 +235,7 @@ def evaluate_trigger_pipeline(
     cyclone_trigger = check_cyclone_alert_trigger(imd_alert_level)
     flooding_trigger = check_urban_flooding_trigger(urban_flooding, rainfall_mm_last_3_hours, visibility_meters)
     visibility_trigger = check_poor_visibility_trigger(visibility_meters)
+    aqi_trigger = check_aqi_trigger(aqi)
     demand_drop_trigger = check_demand_drop_trigger(current_orders, average_orders)
     pause_trigger = check_order_allocation_pause_trigger(orders_in_3_hours)
 
@@ -227,6 +245,7 @@ def evaluate_trigger_pipeline(
         cyclone_trigger,
         flooding_trigger,
         visibility_trigger,
+        aqi_trigger,
         demand_drop_trigger,
         pause_trigger,
     ]
@@ -258,6 +277,7 @@ def evaluate_trigger_pipeline(
             or cyclone_trigger["breached"]
             or flooding_trigger["breached"]
             or visibility_trigger["breached"]
+            or aqi_trigger["breached"]
         ),
         secondary_source=bool(demand_drop_trigger["breached"] or pause_trigger["breached"]),
         platform_impact=bool(demand_drop_trigger["breached"] or pause_trigger["breached"]),

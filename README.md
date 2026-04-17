@@ -2,6 +2,8 @@
 
 > **FairRoute in 30 seconds:** Parametric income protection for India's 7.7M gig delivery workers. Workers pay ₹49–99/week. When IMD + OpenWeather data confirms a disruption (heavy rain, extreme heat, demand collapse), payouts hit their UPI within 2 hours — zero paperwork. A 5-layer fraud engine stops GPS spoofers. A Gemini-powered voice assistant handles queries in 5 Indian languages at ₹0.01/query. Built with React, Node.js, FastAPI, PostgreSQL on GCP.
 
+### 🌐 Live Demo: [https://xverta.com](https://xverta.com)
+
 ---
 
 ## Table of Contents
@@ -855,3 +857,51 @@ MIT License - See LICENSE file for details
   <br>
   <em>Protecting India's delivery workforce through AI-powered parametric insurance</em>
 </p>
+
+---
+
+## Regulatory Compliance — 10-Point Checklist Implementation
+
+All ten IRDAI sandbox / parametric insurance regulatory requirements are implemented in this codebase:
+
+### 1. Trigger Objective & Verifiable
+- Rainfall >30 mm, temperature >42 °C, visibility <100 m, IMD orange/red cyclone alerts, urban flooding, demand drop >40 %, order-allocation pause — `backend/triggers.py`
+- **AQI >300 (CPCB 'Severe' band):** `check_aqi_trigger()` converts PM2.5 µg/m³ → India-AQI using official CPCB breakpoints (`_pm25_to_india_aqi()` in `backend/main.py`). AQI data fetched per-zone via OpenWeather Air Pollution API.
+
+### 2. Excluded Health / Life / Vehicle
+- Coverage is strictly **income-loss protection**: `payout = lost_hours × hourly_rate × severity_multiplier`, capped at daily max. No medical, life, or vehicle claims exist in the system.
+
+### 3. Automatic Payout (< 2 hours)
+- APScheduler polls weather → `auto_create_claims_for_risk_crossing_job()` → 7-layer fraud check → auto-approve/reject → `process_payout()` via Razorpay / UPI Direct / Stripe — `backend/payment_gateway.py`. Zero human intervention for low-fraud claims.
+
+### 4. Pool Financially Sustainable
+- Admin dashboard tracks loss ratios (weekly / monthly / overall), reserves at 125 %, reserve gap, and what-if catastrophe stress tests (14-day monsoon, cyclone scenarios) with BCR 0.65 target — `frontend/src/pages/AdminDashboard.tsx`.
+
+### 5. Fraud Detection on Data, Not Behaviour
+- 7-layer weighted engine in `backend/fraud_engine.py`: GPS consistency, claim frequency, location-disruption cross-check, velocity / spoofing detection, behavioural analysis, historical weather correlation, VPN detection.
+- ML ensemble (XGBoost + Isolation Forest) and DBSCAN cluster detection in `backend/ml/`.
+
+### 6. Frictionless Premium Collection (UPI AutoPay)
+- `UPIMandate` dataclass + `create_upi_mandate()` / `execute_mandate_debit()` / `revoke_mandate()` in `backend/payment_gateway.py`.
+- Worker authorises once via UPI PIN; platform auto-debits ₹49/69/99 weekly — no repeated action needed.
+- API endpoints: `POST /api/mandate/create`, `GET /api/mandate/{worker_id}`, `POST /api/mandate/{worker_id}/debit`, `DELETE /api/mandate/{worker_id}`.
+
+### 7. Dynamic Pricing (Not Flat-Rate)
+- ML-based premium engine in `backend/premium_engine.py` with features: `monsoon_flag` (Jun–Sep), `flood_x_monsoon` interaction, zone risk score, tenure loyalty discount, claims-to-premium ratio.
+- Premiums adjust ±15–25 % per zone per season. Itemised breakdown shown in the Policy page.
+
+### 8. Adverse Selection Blocked (48-hour Lockout)
+- `_check_adverse_selection_lockout()` in `backend/main.py` blocks `/select-plan` if an IMD orange/red alert was issued in the worker's city within the last 48 hours.
+- `GET /api/enrollment-lockout?city=<city>` lets the frontend pre-check and show a lockout banner before the worker attempts purchase.
+- Configurable via `ADVERSE_SELECTION_LOCKOUT_HOURS` constant (default 48).
+
+### 9. Operational Cost Near Zero
+- Fully straight-through processing: weather ingestion → auto-claim creation → fraud scoring → auto-approve → UPI payout. No manual review unless fraud score exceeds threshold (`hold-for-review`).
+- UPI AutoPay mandates eliminate premium collection overhead.
+- Gemini assistant handles support queries at ₹0.01/query.
+
+### 10. Basis Risk Minimised (Hyper-Local Weather)
+- `ZONE_COORDS` in `backend/main.py` maps each delivery micro-zone to exact lat/lon coordinates (e.g., Koramangala 12.9352, 77.6245).
+- `fetch_weather_for_zone()` queries OpenWeather with `lat`/`lon` params instead of city name — each municipal-ward-level zone gets its own weather reading.
+- AQI is also fetched per-zone coordinates via the Air Pollution API.
+- GPS verification confirms worker is within 15 km of zone centre before payout.
