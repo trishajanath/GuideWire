@@ -46,6 +46,11 @@ except ImportError:
         pass
 
 try:
+    import certifi
+except ImportError:
+    certifi = None
+
+try:
     from .triggers import (
         evaluate_trigger_pipeline,
     )
@@ -202,6 +207,34 @@ MONGODB_URI = os.getenv("MONGODB_URI", "").strip()
 MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "guidewire")
 MONGODB_RAW_EVENTS_COLLECTION = os.getenv("MONGODB_RAW_EVENTS_COLLECTION", "raw_events")
 MONGODB_COUNTERS_COLLECTION = os.getenv("MONGODB_COUNTERS_COLLECTION", "counters")
+MONGODB_APP_STATE_COLLECTION = os.getenv("MONGODB_APP_STATE_COLLECTION", "app_state")
+MONGODB_APP_STATE_DOC_ID = os.getenv("MONGODB_APP_STATE_DOC_ID", "runtime_state")
+MONGODB_TLS_ALLOW_INVALID_CERTIFICATES = (
+    os.getenv("MONGODB_TLS_ALLOW_INVALID_CERTIFICATES", "false").strip().lower() == "true"
+)
+MONGODB_TLS_ALLOW_INVALID_HOSTNAMES = (
+    os.getenv("MONGODB_TLS_ALLOW_INVALID_HOSTNAMES", "false").strip().lower() == "true"
+)
+
+
+def _build_mongo_client_kwargs(**overrides: object) -> dict:
+    kwargs = {
+        "serverSelectionTimeoutMS": 5000,
+    }
+
+    # On some macOS Python builds, system cert roots are not discovered correctly.
+    # certifi provides a stable CA bundle for Atlas TLS validation.
+    if certifi is not None:
+        kwargs["tlsCAFile"] = certifi.where()
+
+    if MONGODB_TLS_ALLOW_INVALID_CERTIFICATES:
+        kwargs["tlsAllowInvalidCertificates"] = True
+
+    if MONGODB_TLS_ALLOW_INVALID_HOSTNAMES:
+        kwargs["tlsAllowInvalidHostnames"] = True
+
+    kwargs.update(overrides)
+    return kwargs
 
 # Maps internal zone IDs to the city query used by OpenWeather.
 ZONE_CONFIG: dict[str, str] = {
@@ -263,6 +296,156 @@ mock_rainfall_by_city = {
 rainfall_threshold_mm = 30
 
 
+def _is_real_user(user: dict) -> bool:
+    return not bool(user.get("is_synthetic", False))
+
+
+def _next_user_id() -> int:
+    return max(users.keys(), default=0) + 1
+
+
+def _find_user_id_by_phone(phone: str, *, include_synthetic: bool = False) -> int | None:
+    for user_id, user in users.items():
+        if not include_synthetic and not _is_real_user(user):
+            continue
+        if re.sub(r"\D", "", str(user.get("phone", "")))[-10:] == phone:
+            return user_id
+    return None
+
+
+def _serialize_claim_record(claim: dict) -> dict:
+    serialized = dict(claim)
+    ts = serialized.get("timestamp")
+    if isinstance(ts, datetime):
+        serialized["timestamp"] = ts.isoformat()
+    return serialized
+
+
+def _deserialize_claim_record(claim: dict) -> dict:
+    restored = dict(claim)
+    ts = restored.get("timestamp")
+    if isinstance(ts, str):
+        try:
+            restored["timestamp"] = datetime.fromisoformat(ts)
+        except ValueError:
+            restored["timestamp"] = datetime.now(timezone.utc)
+    return restored
+
+
+class RuntimeStateRepository:
+    def load(self) -> dict | None:
+        raise NotImplementedError
+
+    def save(self, payload: dict) -> None:
+        raise NotImplementedError
+
+
+class InMemoryRuntimeStateRepository(RuntimeStateRepository):
+    def load(self) -> dict | None:
+        return None
+
+    def save(self, payload: dict) -> None:
+        return None
+
+
+class MongoRuntimeStateRepository(RuntimeStateRepository):
+    def __init__(self, mongo_uri: str) -> None:
+        if MongoClient is None:
+            raise RuntimeError("pymongo is not installed")
+
+        self._client = MongoClient(
+            mongo_uri,
+            **_build_mongo_client_kwargs(
+                connectTimeoutMS=10000,
+                socketTimeoutMS=30000,
+                maxPoolSize=50,
+                minPoolSize=5,
+                maxIdleTimeMS=300000,
+            ),
+        )
+        self._db = self._client[MONGODB_DB_NAME]
+        self._collection = self._db[MONGODB_APP_STATE_COLLECTION]
+        self._client.admin.command("ping")
+        self._collection.create_index("updated_at", name="updated_at_idx")
+
+    def load(self) -> dict | None:
+        document = self._collection.find_one({"_id": MONGODB_APP_STATE_DOC_ID})
+        if document is None:
+            return None
+        document.pop("_id", None)
+        return document
+
+    def save(self, payload: dict) -> None:
+        doc = {**payload, "updated_at": datetime.now(timezone.utc).isoformat()}
+        self._collection.replace_one(
+            {"_id": MONGODB_APP_STATE_DOC_ID},
+            {"_id": MONGODB_APP_STATE_DOC_ID, **doc},
+            upsert=True,
+        )
+
+
+def create_runtime_state_repository() -> RuntimeStateRepository:
+    if not MONGODB_URI:
+        logger.warning("MONGODB_URI is not set; app state will remain in-memory")
+        return InMemoryRuntimeStateRepository()
+
+    if MongoClient is None:
+        logger.warning("pymongo is unavailable; app state will remain in-memory")
+        return InMemoryRuntimeStateRepository()
+
+    try:
+        repository = MongoRuntimeStateRepository(MONGODB_URI)
+        logger.info("MongoDB runtime-state repository enabled")
+        return repository
+    except Exception as exc:
+        logger.warning("MongoDB runtime-state unavailable; using in-memory state: %s", exc)
+        return InMemoryRuntimeStateRepository()
+
+
+runtime_state_repository: RuntimeStateRepository = create_runtime_state_repository()
+
+
+def _save_runtime_state() -> None:
+    payload = {
+        "users": {str(k): v for k, v in users.items()},
+        "claims": [_serialize_claim_record(c) for c in claims],
+        "policies": {str(k): v for k, v in policies.items()},
+        "policy_history": {str(k): v for k, v in policy_history.items()},
+    }
+    runtime_state_repository.save(payload)
+
+
+def _persist_runtime_state() -> None:
+    try:
+        _save_runtime_state()
+    except Exception as exc:
+        logger.warning("Failed to persist runtime state: %s", exc)
+
+
+def _load_runtime_state() -> None:
+    payload = runtime_state_repository.load()
+    if not payload:
+        return
+
+    try:
+        users.clear()
+        users.update({int(k): v for k, v in (payload.get("users") or {}).items()})
+
+        claims.clear()
+        claims.extend([_deserialize_claim_record(c) for c in (payload.get("claims") or [])])
+
+        policies.clear()
+        policies.update({int(k): v for k, v in (payload.get("policies") or {}).items()})
+
+        policy_history.clear()
+        policy_history.update({int(k): v for k, v in (payload.get("policy_history") or {}).items()})
+    except Exception as exc:
+        logger.warning("Unable to restore runtime state; starting fresh: %s", exc)
+
+
+_load_runtime_state()
+
+
 class RawWeatherEvent(BaseModel):
     id: int = Field(..., ge=1)
     zone_id: str = Field(..., min_length=1)
@@ -308,7 +491,7 @@ class MongoRawWeatherEventRepository(RawWeatherEventRepository):
         if MongoClient is None:
             raise RuntimeError("pymongo is not installed")
 
-        self._client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        self._client = MongoClient(mongo_uri, **_build_mongo_client_kwargs())
         self._db = self._client[MONGODB_DB_NAME]
         self._raw_events = self._db[MONGODB_RAW_EVENTS_COLLECTION]
         self._counters = self._db[MONGODB_COUNTERS_COLLECTION]
@@ -995,6 +1178,7 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             "selected_plan": "Standard",
             "plan_details": plans.get("Standard", {}),
             "zone_id": payload.zone_id,
+            "is_synthetic": True,
         }
         users[payload.worker_id] = user
         # Also create a stub active policy so eligibility checks pass
@@ -1004,6 +1188,7 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
                 "status": "active",
                 "started": datetime.now(timezone.utc).isoformat(),
             }
+        _persist_runtime_state()
 
     policy = policies.get(payload.worker_id)
     plan_details = _claim_plan_details(user, policy)
@@ -1405,6 +1590,7 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             "multiplier": 1.0,
         }
     )
+    _persist_runtime_state()
 
     return ClaimEvaluateResponse(
         worker_id=payload.worker_id,
@@ -2029,6 +2215,7 @@ def _append_policy_history(worker_id: int, action: str, detail: str) -> None:
     )
     if len(history) > 100:
         del history[100:]
+    _persist_runtime_state()
 
 
 def _get_user_policy_tier(user: dict) -> Literal["Basic", "Standard", "Premium"]:
@@ -2061,6 +2248,7 @@ def _ensure_policy(worker_id: int) -> dict:
     }
     policies[worker_id] = created
     _append_policy_history(worker_id, "created", f"Policy created in {tier} tier")
+    _persist_runtime_state()
     return created
 
 
@@ -2074,6 +2262,7 @@ def _sync_policy_from_user(worker_id: int) -> None:
         policy["tier"] = tier
         policy["updated_at"] = datetime.now(timezone.utc).isoformat()
         _append_policy_history(worker_id, "upgrade", f"Upgraded policy to {tier}")
+        _persist_runtime_state()
 
 
 def calculate_fraud_score(user_id: int, zone_id: str = "", weather_risk: int = 0, anomaly_score: float = 0.0, trigger_active: bool = False) -> dict:
@@ -2190,17 +2379,63 @@ def register_user(payload: RegistrationRequest):
     if not entry or not entry.get("verified"):
         raise HTTPException(status_code=400, detail="Phone not verified — complete OTP first")
 
-    user_id = len(users) + 1
-    user = {
+    existing_user_id = _find_user_id_by_phone(phone)
+    if existing_user_id is not None:
+        user = users[existing_user_id]
+        user.update(
+            {
+                "name": payload.name,
+                "phone": phone,
+                "city": payload.city,
+                "platform": payload.platform,
+                "zone_area": payload.zone_area,
+                "is_synthetic": False,
+            }
+        )
+        user.setdefault("registered_at", datetime.now(timezone.utc).isoformat())
+        _persist_runtime_state()
+        return {"user_id": existing_user_id}
+
+    user_id = _next_user_id()
+    users[user_id] = {
         "user_id": user_id,
         "name": payload.name,
-        "phone": payload.phone,
+        "phone": phone,
         "city": payload.city,
         "platform": payload.platform,
         "zone_area": payload.zone_area,
+        "registered_at": datetime.now(timezone.utc).isoformat(),
+        "is_synthetic": False,
     }
-    users[user_id] = user
+    _persist_runtime_state()
     return {"user_id": user_id}
+
+
+@app.get("/login/phone")
+def login_by_phone(phone: str):
+    normalized_phone = _normalize_phone(phone)
+    if len(normalized_phone) != 10:
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+
+    user_id = _find_user_id_by_phone(normalized_phone)
+    if user_id is None:
+        raise HTTPException(status_code=404, detail="No account found. Please sign up first.")
+
+    user = users.get(user_id)
+    if user is None or not _is_real_user(user):
+        raise HTTPException(status_code=404, detail="No account found. Please sign up first.")
+
+    return {
+        "user_id": user_id,
+        "name": user.get("name", ""),
+        "phone": normalized_phone,
+        "city": user.get("city", ""),
+        "platform": user.get("platform", "Swiggy"),
+        "zone_area": user.get("zone_area"),
+        "zone_id": user.get("zone_id"),
+        "selected_plan": user.get("selected_plan"),
+        "upi_id": user.get("upi_id"),
+    }
 
 
 @app.post("/select-plan")
@@ -2213,6 +2448,7 @@ def select_plan(payload: PlanSelectionRequest):
     plan_details = calculate_premium(user)
     user["plan_details"] = plan_details
     _sync_policy_from_user(payload.user_id)
+    _persist_runtime_state()
 
     return {
         "user_id": payload.user_id,
@@ -2233,6 +2469,7 @@ def get_policy(worker_id: int):
             policy["paused_until"] = None
             policy["updated_at"] = now.isoformat()
             _append_policy_history(worker_id, "resume", "Auto-resumed after pause window ended")
+            _persist_runtime_state()
 
     return policy
 
@@ -2245,6 +2482,7 @@ def pause_worker_policy(worker_id: int, payload: PolicyPauseRequest):
     policy["paused_until"] = (now + timedelta(days=payload.days)).isoformat()
     policy["updated_at"] = now.isoformat()
     _append_policy_history(worker_id, "pause", f"Coverage paused for {payload.days} days")
+    _persist_runtime_state()
     return policy
 
 
@@ -2256,6 +2494,7 @@ def resume_worker_policy(worker_id: int):
     policy["paused_until"] = None
     policy["updated_at"] = now.isoformat()
     _append_policy_history(worker_id, "resume", "Coverage resumed")
+    _persist_runtime_state()
     return policy
 
 
@@ -2274,6 +2513,7 @@ def upgrade_worker_policy(worker_id: int, payload: PolicyUpgradeRequest):
         user["plan_details"] = calculate_premium(user)
 
     _append_policy_history(worker_id, "upgrade", f"Upgraded policy to {payload.tier}")
+    _persist_runtime_state()
     return policy
 
 
@@ -2395,6 +2635,7 @@ async def auto_claim(payload: AutoClaimRequest):
             "multiplier": 1.0,
         }
         claims.append(claim_record)
+        _persist_runtime_state()
         return {
             "status": claim_record["status"],
             "trigger_type": None,
@@ -2433,6 +2674,7 @@ async def auto_claim(payload: AutoClaimRequest):
             "multiplier": multiplier,
         }
     )
+    _persist_runtime_state()
 
     if claim_status != "approved":
         return {
@@ -3104,8 +3346,18 @@ async def admin_analytics():
     weekly_payouts = sum(c.get("payout_amount", 0) for c in claims_this_week)
     monthly_payouts = sum(c.get("payout_amount", 0) for c in claims_this_month)
 
+    real_users = {uid: u for uid, u in users.items() if _is_real_user(u)}
+    real_user_ids = set(real_users.keys())
+    real_claims = [c for c in all_claims if c.get("user_id") in real_user_ids]
+    real_claims_week = [c for c in claims_this_week if c.get("user_id") in real_user_ids]
+    real_claims_month = [c for c in claims_this_month if c.get("user_id") in real_user_ids]
+
+    total_payouts = sum(c.get("payout_amount", 0) for c in real_claims)
+    weekly_payouts = sum(c.get("payout_amount", 0) for c in real_claims_week)
+    monthly_payouts = sum(c.get("payout_amount", 0) for c in real_claims_month)
+
     # Premium revenue estimation
-    active_workers = len(users)
+    active_workers = len(real_users)
     avg_premium = 69  # Standard tier average
     weekly_premium_revenue = active_workers * avg_premium
     monthly_premium_revenue = weekly_premium_revenue * 4
@@ -3115,7 +3367,7 @@ async def admin_analytics():
     monthly_loss_ratio = round(monthly_payouts / max(monthly_premium_revenue, 1), 3)
 
     # Fraud stats
-    fraud_scores = [c.get("fraud_score", 0) for c in all_claims]
+    fraud_scores = [c.get("fraud_score", 0) for c in real_claims]
     high_fraud = len([s for s in fraud_scores if s > 0.6])
     medium_fraud = len([s for s in fraud_scores if 0.3 <= s <= 0.6])
     low_fraud = len([s for s in fraud_scores if s < 0.3])
@@ -3123,7 +3375,7 @@ async def admin_analytics():
 
     # Claims by trigger type
     trigger_breakdown: dict[str, dict] = {}
-    for c in all_claims:
+    for c in real_claims:
         trigger = c.get("trigger_type") or "no_trigger"
         triggers = [t.strip() for t in trigger.split(",") if t.strip()]
         for t in triggers:
@@ -3134,7 +3386,7 @@ async def admin_analytics():
 
     # Claims by status
     status_breakdown: dict[str, int] = {}
-    for c in all_claims:
+    for c in real_claims:
         status = c.get("status", "unknown")
         status_breakdown[status] = status_breakdown.get(status, 0) + 1
 
@@ -3143,8 +3395,8 @@ async def admin_analytics():
 
     # Worker segments
     worker_segments = {"gold": 0, "silver": 0, "standard": 0, "review": 0}
-    for uid, u in users.items():
-        user_c = [c for c in all_claims if c["user_id"] == uid]
+    for uid, _u in real_users.items():
+        user_c = [c for c in real_claims if c["user_id"] == uid]
         if not user_c:
             worker_segments["standard"] += 1
             continue
@@ -3163,7 +3415,7 @@ async def admin_analytics():
     daily_claims: dict[str, dict] = {}
     for d in range(7):
         day = (now - timedelta(days=d)).date().isoformat()
-        day_claims = [c for c in all_claims if c["timestamp"].date().isoformat() == day]
+        day_claims = [c for c in real_claims if c["timestamp"].date().isoformat() == day]
         daily_claims[day] = {
             "claims": len(day_claims),
             "payouts": round(sum(c.get("payout_amount", 0) for c in day_claims), 2),
@@ -3173,7 +3425,7 @@ async def admin_analytics():
     return {
         "summary": {
             "total_workers": active_workers,
-            "total_claims": len(all_claims),
+            "total_claims": len(real_claims),
             "total_payouts": round(total_payouts, 2),
             "weekly_premium_revenue": weekly_premium_revenue,
             "monthly_premium_revenue": monthly_premium_revenue,
@@ -3197,11 +3449,66 @@ async def admin_analytics():
     }
 
 
+@app.get("/api/admin/users")
+def admin_users():
+    rows = []
+    for user_id, user in users.items():
+        if not _is_real_user(user):
+            continue
+
+        user_claims = [c for c in claims if c.get("user_id") == user_id]
+        approved_payouts = sum(
+            c.get("payout_amount", 0)
+            for c in user_claims
+            if c.get("status") in {"approved", "auto-approve", "approve-with-flag"}
+        )
+
+        rows.append(
+            {
+                "user_id": user_id,
+                "name": user.get("name", ""),
+                "phone": _normalize_phone(str(user.get("phone", ""))),
+                "city": user.get("city", ""),
+                "zone_area": user.get("zone_area"),
+                "platform": user.get("platform", "Swiggy"),
+                "selected_plan": user.get("selected_plan"),
+                "registered_at": user.get("registered_at"),
+                "claims_count": len(user_claims),
+                "total_payout": round(float(approved_payouts), 2),
+            }
+        )
+
+    rows.sort(key=lambda item: item.get("user_id", 0), reverse=True)
+    return {"total": len(rows), "users": rows}
+
+
 @app.get("/api/admin/predictive")
 async def admin_predictive_analytics():
     """Predictive analytics: next week's likely weather/disruption claims."""
     now = datetime.now(timezone.utc)
     month = now.month  # 1-12
+
+    def clamp(value: float, low: float, high: float) -> float:
+        return max(low, min(high, value))
+
+    disruption_breakdown: dict[str, dict[str, float | int]] = {
+        "weather_heavy_rain": {"predicted_claims": 0, "estimated_payout": 0.0},
+        "weather_extreme_heat": {"predicted_claims": 0, "estimated_payout": 0.0},
+        "weather_wind_cyclone": {"predicted_claims": 0, "estimated_payout": 0.0},
+        "weather_other": {"predicted_claims": 0, "estimated_payout": 0.0},
+        "platform_demand_collapse": {"predicted_claims": 0, "estimated_payout": 0.0},
+        "platform_outage_shutdown": {"predicted_claims": 0, "estimated_payout": 0.0},
+        "external_restrictions": {"predicted_claims": 0, "estimated_payout": 0.0},
+    }
+
+    def add_breakdown(bucket: str, predicted_claims: int, per_claim_amount: float, payout_multiplier: float) -> None:
+        if predicted_claims <= 0:
+            return
+        disruption_breakdown[bucket]["predicted_claims"] = int(disruption_breakdown[bucket]["predicted_claims"]) + predicted_claims
+        disruption_breakdown[bucket]["estimated_payout"] = round(
+            float(disruption_breakdown[bucket]["estimated_payout"]) + (predicted_claims * per_claim_amount * payout_multiplier),
+            2,
+        )
 
     # Seasonal multiplier: monsoon Jun-Sep peaks, winter Dec-Feb low
     seasonal_mult = {1: 0.6, 2: 0.5, 3: 0.7, 4: 0.8, 5: 0.9, 6: 1.4,
@@ -3258,6 +3565,50 @@ async def admin_predictive_analytics():
                 avg_payout = real_avg
         estimated_weekly_payout = round(predicted_claims * avg_payout * random.uniform(0.9, 1.1), 2)
 
+        # Allocate next-week disruption claims across weather/platform/external buckets.
+        weather_share = clamp(0.65 + trigger_prob * 0.2, 0.55, 0.85)
+        metro_boost = 0.05 if city_name in {"Mumbai", "Chennai", "Bengaluru", "Delhi", "Kolkata", "Hyderabad"} else 0.0
+        platform_share = clamp(0.25 - (trigger_prob * 0.1) + metro_boost, 0.1, 0.35)
+        weather_claims = int(round(predicted_claims * weather_share))
+        platform_claims = int(round(predicted_claims * platform_share))
+        external_claims = max(0, int(predicted_claims) - weather_claims - platform_claims)
+
+        normalized_trigger = str(trigger_type).lower()
+        rain_claims = 0
+        heat_claims = 0
+        wind_claims = 0
+        other_weather_claims = 0
+        if any(token in normalized_trigger for token in ["rain", "flood"]):
+            rain_claims = int(round(weather_claims * 0.75))
+            wind_claims = int(round(weather_claims * 0.15))
+            heat_claims = max(0, weather_claims - rain_claims - wind_claims)
+        elif "heat" in normalized_trigger:
+            heat_claims = int(round(weather_claims * 0.7))
+            rain_claims = int(round(weather_claims * 0.15))
+            wind_claims = max(0, weather_claims - heat_claims - rain_claims)
+        elif any(token in normalized_trigger for token in ["wind", "cyclone", "storm"]):
+            wind_claims = int(round(weather_claims * 0.7))
+            rain_claims = int(round(weather_claims * 0.2))
+            heat_claims = max(0, weather_claims - wind_claims - rain_claims)
+        else:
+            rain_claims = int(round(weather_claims * 0.4))
+            heat_claims = int(round(weather_claims * 0.25))
+            wind_claims = int(round(weather_claims * 0.2))
+            other_weather_claims = max(0, weather_claims - rain_claims - heat_claims - wind_claims)
+
+        other_weather_claims = max(0, weather_claims - rain_claims - heat_claims - wind_claims)
+        platform_demand_claims = int(round(platform_claims * 0.6))
+        platform_outage_claims = max(0, platform_claims - platform_demand_claims)
+        per_claim_amount = estimated_weekly_payout / max(predicted_claims, 1)
+
+        add_breakdown("weather_heavy_rain", rain_claims, per_claim_amount, 1.0)
+        add_breakdown("weather_extreme_heat", heat_claims, per_claim_amount, 0.92)
+        add_breakdown("weather_wind_cyclone", wind_claims, per_claim_amount, 1.08)
+        add_breakdown("weather_other", other_weather_claims, per_claim_amount, 0.88)
+        add_breakdown("platform_demand_collapse", platform_demand_claims, per_claim_amount, 0.85)
+        add_breakdown("platform_outage_shutdown", platform_outage_claims, per_claim_amount, 0.95)
+        add_breakdown("external_restrictions", external_claims, per_claim_amount, 0.9)
+
         # Confidence: higher for stable weather, lower for volatile
         base_conf = 0.82 if trigger_prob < 0.2 else 0.68
         confidence = round(min(0.95, max(0.55, base_conf + random.uniform(-0.08, 0.08))), 2)
@@ -3308,6 +3659,14 @@ async def admin_predictive_analytics():
     total_estimated_payout = sum(f["estimated_payout"] for f in city_forecasts)
     high_risk_cities = [f["city"] for f in city_forecasts if f["predicted_risk"] > 45]
 
+    active_workers = max(1, len([u for u in users.values() if _is_real_user(u)]))
+    avg_weekly_premium = 69.0
+    predicted_weekly_premium_revenue = round(active_workers * avg_weekly_premium, 2)
+    predicted_loss_ratio = round(total_estimated_payout / max(predicted_weekly_premium_revenue, 1.0), 3)
+
+    for bucket in disruption_breakdown:
+        disruption_breakdown[bucket]["estimated_payout"] = round(float(disruption_breakdown[bucket]["estimated_payout"]), 2)
+
     return {
         "prediction_period": {
             "start": (now + timedelta(days=1)).isoformat(),
@@ -3318,7 +3677,10 @@ async def admin_predictive_analytics():
             "estimated_total_payout": round(total_estimated_payout, 2),
             "high_risk_cities": high_risk_cities,
             "recommended_reserve": round(total_estimated_payout * 1.15, 2),
+            "predicted_weekly_premium_revenue": predicted_weekly_premium_revenue,
+            "predicted_loss_ratio": predicted_loss_ratio,
         },
+        "disruption_breakdown": disruption_breakdown,
         "city_forecasts": city_forecasts,
     }
 
@@ -3361,12 +3723,14 @@ async def demo_simulate_disruption(payload: DemoSimulationRequest):
             "plan_details": plans.get(payload.worker_plan, plans["Standard"]),
             "zone_area": f"{payload.city.lower()}_central",
             "upi_id": f"{payload.worker_name.lower().replace(' ', '.')}@upi",
+            "is_synthetic": True,
         }
         policies[demo_worker_id] = {
             "tier": payload.worker_plan,
             "status": "active",
             "started": demo_start.isoformat(),
         }
+        _persist_runtime_state()
 
     user = users[demo_worker_id]
     plan_detail = plans.get(payload.worker_plan, plans["Standard"])

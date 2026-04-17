@@ -2,10 +2,12 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import OfflineBanner from "@/components/OfflineBanner";
+import RoleSelect from "./pages/RoleSelect";
 import Welcome from "./pages/Welcome";
 import Login from "./pages/Login";
+import AdminLogin from "./pages/AdminLogin";
 import Register from "./pages/Register";
 import KYC from "./pages/KYC";
 import Plans from "./pages/Plans";
@@ -22,8 +24,25 @@ import AdminDashboard from "./pages/AdminDashboard";
 import AdminIMDAlerts from "./pages/AdminIMDAlerts";
 import DemoSimulation from "./pages/DemoSimulation";
 import NotFound from "./pages/NotFound";
+import { getAdminSession } from "./lib/session";
 
 const queryClient = new QueryClient();
+
+const AdminGuard = ({ children }: { children: JSX.Element }) => {
+  const admin = getAdminSession();
+  if (!admin) {
+    return <Navigate to="/admin/login" replace />;
+  }
+  return children;
+};
+
+const AdminLoginGate = () => {
+  const admin = getAdminSession();
+  if (admin) {
+    return <Navigate to="/admin" replace />;
+  }
+  return <AdminLogin />;
+};
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -33,9 +52,12 @@ const App = () => (
       <BrowserRouter>
         <OfflineBanner />
         <Routes>
-          <Route path="/" element={<Welcome />} />
+          <Route path="/" element={<RoleSelect />} />
+          <Route path="/worker" element={<Welcome />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/worker/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/worker/register" element={<Register />} />
           <Route path="/kyc" element={<KYC />} />
           <Route path="/plans" element={<Plans />} />
           <Route path="/dashboard" element={<Dashboard />} />
@@ -47,8 +69,9 @@ const App = () => (
           <Route path="/profile" element={<Profile />} />
           <Route path="/policy" element={<Policy />} />
           <Route path="/policy/history" element={<PolicyHistory />} />
-          <Route path="/admin" element={<AdminDashboard />} />
-          <Route path="/admin/imd-alerts" element={<AdminIMDAlerts />} />
+          <Route path="/admin/login" element={<AdminLoginGate />} />
+          <Route path="/admin" element={<AdminGuard><AdminDashboard /></AdminGuard>} />
+          <Route path="/admin/imd-alerts" element={<AdminGuard><AdminIMDAlerts /></AdminGuard>} />
           <Route path="/demo" element={<DemoSimulation />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

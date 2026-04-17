@@ -52,6 +52,21 @@ export const registerUser = (data: RegisterPayload) =>
     body: JSON.stringify(data),
   });
 
+export interface PhoneLoginUser {
+  user_id: number;
+  name: string;
+  phone: string;
+  city: string;
+  platform: "Swiggy" | "Zomato";
+  zone_area?: string;
+  zone_id?: string;
+  selected_plan?: "Basic" | "Standard" | "Premium";
+  upi_id?: string;
+}
+
+export const loginByPhone = (phone: string) =>
+  request<PhoneLoginUser>(`/login/phone?phone=${encodeURIComponent(phone)}`);
+
 export interface CityZone {
   id: string;
   city: string;
@@ -800,12 +815,31 @@ export interface PredictiveAnalytics {
     estimated_total_payout: number;
     high_risk_cities: string[];
     recommended_reserve: number;
+    predicted_weekly_premium_revenue?: number;
+    predicted_loss_ratio?: number;
   };
+  disruption_breakdown?: Record<string, { predicted_claims: number; estimated_payout: number }>;
   city_forecasts: CityForecast[];
 }
 
 export const getPredictiveAnalytics = () =>
   request<PredictiveAnalytics>("/api/admin/predictive");
+
+export interface AdminUserRow {
+  user_id: number;
+  name: string;
+  phone: string;
+  city: string;
+  zone_area?: string;
+  platform: "Swiggy" | "Zomato";
+  selected_plan?: string;
+  registered_at?: string;
+  claims_count: number;
+  total_payout: number;
+}
+
+export const getAdminUsers = () =>
+  request<{ total: number; users: AdminUserRow[] }>("/api/admin/users");
 
 /* ---- Demo Simulation ---- */
 

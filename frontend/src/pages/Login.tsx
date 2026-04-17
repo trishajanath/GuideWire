@@ -4,7 +4,8 @@ import { ArrowRight, Smartphone, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import MobileShell from "@/components/MobileShell";
-import { getCurrentUser } from "@/lib/session";
+import { saveCurrentUser } from "@/lib/session";
+import { loginByPhone } from "@/lib/api";
 
 const Login = () => {
   const navigate = useNavigate();
@@ -14,21 +15,28 @@ const Login = () => {
   const normalized = phone.replace(/\D/g, "").slice(-10);
   const isValid = normalized.length === 10;
 
-  const handleLogin = () => {
-    const user = getCurrentUser();
+  const handleLogin = async () => {
+    try {
+      const user = await loginByPhone(normalized);
+      const selectedPlan = user.selected_plan ? `${user.selected_plan} Shield` : "Standard Shield";
 
-    if (!user) {
-      setError("No account found. Please sign up first.");
-      return;
+      saveCurrentUser({
+        name: user.name,
+        phone: user.phone,
+        city: user.city,
+        zoneArea: user.zone_area,
+        platform: user.platform,
+        selectedPlan,
+        backendUserId: user.user_id,
+        zoneId: user.zone_id,
+        upiId: user.upi_id,
+      });
+
+      setError("");
+      navigate("/dashboard");
+    } catch (err: any) {
+      setError(err?.message ?? "Unable to login. Please try again.");
     }
-
-    if (user.phone !== normalized) {
-      setError("Phone number does not match your registered account.");
-      return;
-    }
-
-    setError("");
-    navigate("/dashboard");
   };
 
   return (

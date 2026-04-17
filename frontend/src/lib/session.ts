@@ -11,7 +11,13 @@ export type FairRouteUser = {
   zoneId?: string;
 };
 
+export type AdminSession = {
+  username: string;
+  loggedInAt: string;
+};
+
 const USER_STORAGE_KEY = "fairroute_user";
+const ADMIN_SESSION_KEY = "fairroute_admin_session";
 
 export const getCurrentUser = (): FairRouteUser | null => {
   const raw = localStorage.getItem(USER_STORAGE_KEY);
@@ -44,6 +50,28 @@ export const updateCurrentUser = (patch: Partial<FairRouteUser>): FairRouteUser 
 
 export const clearCurrentUser = (): void => {
   localStorage.removeItem(USER_STORAGE_KEY);
+};
+
+export const getAdminSession = (): AdminSession | null => {
+  const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as AdminSession;
+  } catch {
+    localStorage.removeItem(ADMIN_SESSION_KEY);
+    return null;
+  }
+};
+
+export const saveAdminSession = (session: AdminSession): void => {
+  localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+};
+
+export const clearAdminSession = (): void => {
+  localStorage.removeItem(ADMIN_SESSION_KEY);
 };
 
 export const formatIndianPhone = (phone: string): string => {

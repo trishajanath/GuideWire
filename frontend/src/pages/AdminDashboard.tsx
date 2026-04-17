@@ -8,8 +8,10 @@ import { useNavigate } from "react-router-dom";
 import {
   createAdminIMDAlert,
   getAdminAnalytics,
+  getAdminUsers,
   getPredictiveAnalytics,
   type AdminAnalytics,
+  type AdminUserRow,
   type PredictiveAnalytics,
 } from "@/lib/api";
 
@@ -72,15 +74,18 @@ const AdminDashboard = () => {
 
   const [analytics, setAnalytics] = useState<AdminAnalytics | null>(null);
   const [predictions, setPredictions] = useState<PredictiveAnalytics | null>(null);
+  const [adminUsers, setAdminUsers] = useState<AdminUserRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
       getAdminAnalytics().catch(() => null),
       getPredictiveAnalytics().catch(() => null),
-    ]).then(([a, p]) => {
+      getAdminUsers().catch(() => null),
+    ]).then(([a, p, u]) => {
       if (a) setAnalytics(a);
       if (p) setPredictions(p);
+      if (u) setAdminUsers(u.users);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -104,7 +109,7 @@ const AdminDashboard = () => {
       <header className="sticky top-0 z-30 backdrop-blur-xl bg-background/70 border-b border-border/30">
         <div className="max-w-6xl mx-auto flex items-center justify-between px-6 h-14">
           <div className="flex items-center gap-3">
-            <button onClick={() => navigate("/dashboard")} className="text-muted-foreground hover:text-foreground transition-colors">
+            <button onClick={() => navigate("/")} className="text-muted-foreground hover:text-foreground transition-colors">
               <ArrowLeft className="w-[18px] h-[18px]" />
             </button>
             <span className="text-sm font-semibold text-foreground tracking-tight">FairRoute Admin</span>
@@ -142,7 +147,7 @@ const AdminDashboard = () => {
         ) : tab === "overview" ? (
           <OverviewTab analytics={analytics} zone={zone} setZone={setZone} alertLevel={alertLevel}
             setAlertLevel={setAlertLevel} eventType={eventType} setEventType={setEventType}
-            saving={saving} saveMsg={saveMsg} saveAlert={saveAlert} navigate={navigate}
+            saving={saving} saveMsg={saveMsg} saveAlert={saveAlert} navigate={navigate} adminUsers={adminUsers}
           />
         ) : (
           <PredictionsTab predictions={predictions} />
@@ -157,7 +162,7 @@ const AdminDashboard = () => {
 /* ═══════════════════════════════════════════════════════════════════ */
 
 function OverviewTab({
-  analytics, zone, setZone, alertLevel, setAlertLevel, eventType, setEventType, saving, saveMsg, saveAlert, navigate,
+  analytics, zone, setZone, alertLevel, setAlertLevel, eventType, setEventType, saving, saveMsg, saveAlert, navigate, adminUsers,
 }: {
   analytics: AdminAnalytics | null;
   zone: string; setZone: (v: string) => void;
@@ -165,6 +170,7 @@ function OverviewTab({
   eventType: "cyclone" | "rain" | "heatwave"; setEventType: (v: any) => void;
   saving: boolean; saveMsg: string; saveAlert: () => void;
   navigate: (path: string) => void;
+  adminUsers: AdminUserRow[];
 }) {
   const s = analytics?.summary;
 
@@ -222,6 +228,31 @@ function OverviewTab({
               <span>Avg score: <span className="text-foreground/70 font-medium tabular-nums">{pct(analytics?.fraud_stats.avg_score ?? 0)}</span></span>
               <span className="text-accent-green/80 font-medium">{analytics?.fraud_stats.low_risk ?? 0} auto-approved</span>
             </div>
+          </div>
+        </Section>
+
+        <Section title="Actual Registered Workers">
+          <div className="rounded-2xl bg-card/40 backdrop-blur-sm border border-border/30 overflow-hidden">
+            {adminUsers.length === 0 ? (
+              <p className="text-sm text-muted-foreground/40 px-5 py-6">No real users registered yet.</p>
+            ) : (
+              <div className="divide-y divide-border/20">
+                {adminUsers.slice(0, 12).map((u) => (
+                  <div key={u.user_id} className="px-5 py-3.5 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-foreground truncate">{u.name || `User ${u.user_id}`}</p>
+                      <p className="text-[11px] text-muted-foreground/60 truncate">
+                        +91 {u.phone} • {u.city}{u.zone_area ? ` • ${u.zone_area}` : ""}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs font-medium text-foreground/80">{u.selected_plan ?? "No plan"}</p>
+                      <p className="text-[11px] text-accent-green">₹{fmt(Math.round(u.total_payout))}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Section>
       </div>
@@ -467,6 +498,22 @@ function PredictionsTab({ predictions }: { predictions: PredictiveAnalytics | nu
   }
 
   const o = predictions.overall;
+  const projectedLossRatio = o.predicted_loss_ratio ?? 0;
+  const predictedWeeklyPremiumRevenue = o.predicted_weekly_premium_revenue ?? 0;
+  const disruptionRows = Object.entries(predictions.disruption_breakdown ?? {})
+    .map(([key, value]) => ({
+      key,
+      label: key
+        .replace(/^weather_/, "Weather • ")
+        .replace(/^platform_/, "Platform • ")
+        .replace(/^external_/, "External • ")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (m) => m.toUpperCase()),
+      predicted_claims: value.predicted_claims,
+      estimated_payout: value.estimated_payout,
+    }))
+    .filter((item) => item.predicted_claims > 0)
+    .sort((a, b) => b.predicted_claims - a.predicted_claims);
   const riskColor = (r: number) =>
     r > 60 ? "text-destructive" : r > 35 ? "text-warning" : "text-accent-green";
   const riskBg = (r: number) =>
@@ -483,6 +530,47 @@ function PredictionsTab({ predictions }: { predictions: PredictiveAnalytics | nu
         <Stat icon={Shield} label="Recommended Reserve" value={`₹${fmt(Math.round(o.recommended_reserve))}`} sub="115% of estimate" />
         <Stat icon={AlertTriangle} label="High-Risk Cities" value={String(o.high_risk_cities.length)} sub={o.high_risk_cities.join(", ") || "None identified"} />
       </div>
+
+      <Section title="Insurer Forecast Signals">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded-2xl bg-card/50 backdrop-blur-sm border border-border/30 p-5">
+            <p className="text-[10px] text-muted-foreground/50 uppercase font-semibold tracking-wider">Projected Loss Ratio (Next Week)</p>
+            <p className={`text-2xl font-bold mt-1 ${lrColor(projectedLossRatio)}`}>{pct(projectedLossRatio)}</p>
+            <div className="mt-3 h-2 rounded-full bg-foreground/[0.05] overflow-hidden">
+              <div className={`h-full rounded-full ${lrBg(projectedLossRatio)}/70`} style={{ width: `${Math.min(projectedLossRatio * 100, 100)}%` }} />
+            </div>
+            <p className="text-[11px] text-muted-foreground/60 mt-3">
+              Forecasted payout exposure versus projected premium revenue for the next 7 days.
+            </p>
+          </div>
+
+          <div className="rounded-2xl bg-card/50 backdrop-blur-sm border border-border/30 p-5">
+            <p className="text-[10px] text-muted-foreground/50 uppercase font-semibold tracking-wider">Projected Weekly Premium Revenue</p>
+            <p className="text-2xl font-bold text-foreground mt-1">₹{fmt(Math.round(predictedWeeklyPremiumRevenue))}</p>
+            <p className="text-[11px] text-muted-foreground/60 mt-3">
+              Used as the denominator for projected loss ratio and reserve adequacy planning.
+            </p>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Predicted Disruption Breakdown">
+        <div className="rounded-2xl bg-card/50 backdrop-blur-sm border border-border/30 p-4 space-y-2">
+          {disruptionRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground/40 py-6 text-center">No disruption breakdown available.</p>
+          ) : (
+            disruptionRows.map((row) => (
+              <div key={row.key} className="rounded-xl bg-background/40 border border-border/20 px-4 py-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">{row.label}</p>
+                  <p className="text-[11px] text-muted-foreground/60">Likely claims: {fmt(row.predicted_claims)}</p>
+                </div>
+                <p className="text-sm font-bold text-foreground tabular-nums">₹{fmt(Math.round(row.estimated_payout))}</p>
+              </div>
+            ))
+          )}
+        </div>
+      </Section>
 
       {/* City forecast grid */}
       <Section title="City-wise Forecast">

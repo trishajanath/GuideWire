@@ -5,6 +5,7 @@ apscheduler
 httpx
 feedparser
 pymongo
+certifi
 google-genai
 scikit-learn
 xgboost

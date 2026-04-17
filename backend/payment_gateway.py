@@ -19,9 +19,54 @@ from __future__ import annotations
 
 import secrets
 import hashlib
+import os
+import logging
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field
 from enum import Enum
+
+try:
+    from pymongo import MongoClient, DESCENDING
+except ImportError:
+    MongoClient = None
+    DESCENDING = -1
+
+try:
+    import certifi
+except ImportError:
+    certifi = None
+
+
+logger = logging.getLogger("guidewire.payment_gateway")
+
+MONGODB_URI = os.getenv("MONGODB_URI", "").strip()
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "guidewire")
+MONGODB_PAYOUT_COLLECTION = os.getenv("MONGODB_PAYOUT_COLLECTION", "payout_transactions")
+MONGODB_TLS_ALLOW_INVALID_CERTIFICATES = (
+    os.getenv("MONGODB_TLS_ALLOW_INVALID_CERTIFICATES", "false").strip().lower() == "true"
+)
+MONGODB_TLS_ALLOW_INVALID_HOSTNAMES = (
+    os.getenv("MONGODB_TLS_ALLOW_INVALID_HOSTNAMES", "false").strip().lower() == "true"
+)
+
+
+def _build_mongo_client_kwargs(**overrides: object) -> dict:
+    kwargs = {
+        "serverSelectionTimeoutMS": 5000,
+    }
+
+    # Use certifi CA bundle so Atlas TLS works consistently on macOS Python.
+    if certifi is not None:
+        kwargs["tlsCAFile"] = certifi.where()
+
+    if MONGODB_TLS_ALLOW_INVALID_CERTIFICATES:
+        kwargs["tlsAllowInvalidCertificates"] = True
+
+    if MONGODB_TLS_ALLOW_INVALID_HOSTNAMES:
+        kwargs["tlsAllowInvalidHostnames"] = True
+
+    kwargs.update(overrides)
+    return kwargs
 
 
 class PaymentGateway(str, Enum):
@@ -77,9 +122,150 @@ class PayoutTransaction:
             "metadata": self.metadata,
         }
 
+    @classmethod
+    def from_dict(cls, payload: dict) -> "PayoutTransaction":
+        initiated_at_raw = payload.get("initiated_at")
+        completed_at_raw = payload.get("completed_at")
 
-# ── In-memory transaction store ───────────────────────────────────────────
-_transactions: dict[str, PayoutTransaction] = {}
+        initiated_at = (
+            datetime.fromisoformat(initiated_at_raw)
+            if isinstance(initiated_at_raw, str)
+            else datetime.now(timezone.utc)
+        )
+        completed_at = (
+            datetime.fromisoformat(completed_at_raw)
+            if isinstance(completed_at_raw, str)
+            else None
+        )
+
+        gateway_raw = payload.get("gateway", PaymentGateway.RAZORPAY.value)
+        status_raw = payload.get("status", PayoutStatus.INITIATED.value)
+
+        gateway = PaymentGateway(gateway_raw)
+        status = PayoutStatus(status_raw)
+
+        return cls(
+            txn_id=str(payload.get("txn_id", "")),
+            gateway=gateway,
+            worker_id=int(payload.get("worker_id", 0)),
+            claim_id=str(payload.get("claim_id", "")),
+            amount=float(payload.get("amount", 0.0)),
+            currency=str(payload.get("currency", "INR")),
+            status=status,
+            upi_id=payload.get("upi_id"),
+            upi_ref=payload.get("upi_ref"),
+            razorpay_payment_id=payload.get("razorpay_payment_id"),
+            razorpay_order_id=payload.get("razorpay_order_id"),
+            stripe_transfer_id=payload.get("stripe_transfer_id"),
+            initiated_at=initiated_at,
+            completed_at=completed_at,
+            failure_reason=payload.get("failure_reason"),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+
+
+class TransactionRepository:
+    def save(self, txn: PayoutTransaction) -> None:
+        raise NotImplementedError
+
+    def get(self, txn_id: str) -> PayoutTransaction | None:
+        raise NotImplementedError
+
+    def list_by_worker(self, worker_id: int) -> list[PayoutTransaction]:
+        raise NotImplementedError
+
+    def list_all(self) -> list[PayoutTransaction]:
+        raise NotImplementedError
+
+
+class InMemoryTransactionRepository(TransactionRepository):
+    def __init__(self) -> None:
+        self._transactions: dict[str, PayoutTransaction] = {}
+
+    def save(self, txn: PayoutTransaction) -> None:
+        self._transactions[txn.txn_id] = txn
+
+    def get(self, txn_id: str) -> PayoutTransaction | None:
+        return self._transactions.get(txn_id)
+
+    def list_by_worker(self, worker_id: int) -> list[PayoutTransaction]:
+        return [t for t in self._transactions.values() if t.worker_id == worker_id]
+
+    def list_all(self) -> list[PayoutTransaction]:
+        return list(self._transactions.values())
+
+
+class MongoTransactionRepository(TransactionRepository):
+    def __init__(self, mongo_uri: str) -> None:
+        if MongoClient is None:
+            raise RuntimeError("pymongo is not installed")
+
+        # This backend runs as a long-lived API service; keep a moderate pool.
+        self._client = MongoClient(
+            mongo_uri,
+            **_build_mongo_client_kwargs(
+                connectTimeoutMS=10000,
+                socketTimeoutMS=30000,
+                maxPoolSize=50,
+                minPoolSize=5,
+                maxIdleTimeMS=300000,
+            ),
+        )
+        self._db = self._client[MONGODB_DB_NAME]
+        self._collection = self._db[MONGODB_PAYOUT_COLLECTION]
+        self._client.admin.command("ping")
+        self._collection.create_index("txn_id", unique=True, name="txn_id_uq")
+        self._collection.create_index(
+            [("worker_id", DESCENDING), ("initiated_at", DESCENDING)],
+            name="worker_time_idx",
+        )
+
+    def save(self, txn: PayoutTransaction) -> None:
+        payload = txn.to_dict()
+        self._collection.replace_one({"txn_id": txn.txn_id}, payload, upsert=True)
+
+    def get(self, txn_id: str) -> PayoutTransaction | None:
+        payload = self._collection.find_one({"txn_id": txn_id}, {"_id": 0})
+        if payload is None:
+            return None
+        return PayoutTransaction.from_dict(payload)
+
+    def list_by_worker(self, worker_id: int) -> list[PayoutTransaction]:
+        cursor = self._collection.find(
+            {"worker_id": worker_id},
+            {"_id": 0},
+            sort=[("initiated_at", DESCENDING), ("txn_id", DESCENDING)],
+        )
+        return [PayoutTransaction.from_dict(payload) for payload in cursor]
+
+    def list_all(self) -> list[PayoutTransaction]:
+        cursor = self._collection.find(
+            {},
+            {"_id": 0},
+            sort=[("initiated_at", DESCENDING), ("txn_id", DESCENDING)],
+        )
+        return [PayoutTransaction.from_dict(payload) for payload in cursor]
+
+
+def create_transaction_repository() -> TransactionRepository:
+    if not MONGODB_URI:
+        logger.warning("MONGODB_URI missing; using in-memory payout transaction store")
+        return InMemoryTransactionRepository()
+
+    if MongoClient is None:
+        logger.warning("pymongo unavailable; using in-memory payout transaction store")
+        return InMemoryTransactionRepository()
+
+    try:
+        repository = MongoTransactionRepository(MONGODB_URI)
+        logger.info("MongoDB payout transaction repository enabled")
+        return repository
+    except Exception as exc:
+        logger.warning("MongoDB payout repository unavailable; using in-memory store: %s", exc)
+        return InMemoryTransactionRepository()
+
+
+transaction_repository: TransactionRepository = create_transaction_repository()
 
 
 def _generate_txn_id() -> str:
@@ -141,7 +327,7 @@ def process_razorpay_payout(
     txn.completed_at = datetime.now(timezone.utc) + timedelta(milliseconds=850)
     txn.upi_ref = _generate_upi_ref()
 
-    _transactions[txn.txn_id] = txn
+    transaction_repository.save(txn)
     return txn
 
 
@@ -183,7 +369,7 @@ def process_upi_payout(
     txn.status = PayoutStatus.COMPLETED
     txn.completed_at = datetime.now(timezone.utc) + timedelta(milliseconds=520)
 
-    _transactions[txn.txn_id] = txn
+    transaction_repository.save(txn)
     return txn
 
 
@@ -224,7 +410,7 @@ def process_stripe_payout(
     txn.status = PayoutStatus.COMPLETED
     txn.completed_at = datetime.now(timezone.utc) + timedelta(milliseconds=1200)
 
-    _transactions[txn.txn_id] = txn
+    transaction_repository.save(txn)
     return txn
 
 
@@ -250,20 +436,20 @@ def process_payout(
 
 
 def get_transaction(txn_id: str) -> PayoutTransaction | None:
-    return _transactions.get(txn_id)
+    return transaction_repository.get(txn_id)
 
 
 def get_worker_transactions(worker_id: int) -> list[PayoutTransaction]:
-    return [t for t in _transactions.values() if t.worker_id == worker_id]
+    return transaction_repository.list_by_worker(worker_id)
 
 
 def get_all_transactions() -> list[PayoutTransaction]:
-    return list(_transactions.values())
+    return transaction_repository.list_all()
 
 
 def get_transaction_stats() -> dict:
     """Aggregate payout statistics across all gateways."""
-    all_txns = list(_transactions.values())
+    all_txns = transaction_repository.list_all()
     completed = [t for t in all_txns if t.status == PayoutStatus.COMPLETED]
     processing_times = [
         (t.completed_at - t.initiated_at).total_seconds() * 1000
