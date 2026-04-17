@@ -818,6 +818,8 @@ Every trigger confirmation requires multi-signal validation to prevent false pos
 ![Profile Screen](frontend/wireframes/11-profile.png)
 
 ---
+## Pitch Deck
+https://drive.google.com/file/d/1MJbnA386Kbomn5VvqQ5zoR8I8w0HhBLg/view?usp=drive_link
 
 ## Sources
 
