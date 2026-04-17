@@ -896,7 +896,7 @@ const TriggerAlert = () => {
               <TabsTrigger value="spoof-sim">Fraud Spoof</TabsTrigger>
             </TabsList>
             <TabsContent value="trigger-lab" className="mt-4">
-              <TriggerLab workerId={userId} zoneId={zoneId} city={city} onClaimResult={handleDesktopClaimResult} />
+              <TriggerLab />
             </TabsContent>
             <TabsContent value="spoof-sim" className="mt-4">
               <FraudDemo workerId={userId} zoneId={zoneId} city={city} onClaimResult={handleDesktopClaimResult} />

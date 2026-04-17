@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -112,6 +112,49 @@ try:
     from .assistant import generate_assistant_reply, generate_city_zone_suggestions
 except ImportError:
     from assistant import generate_assistant_reply, generate_city_zone_suggestions
+
+try:
+    from .gps_zone_mapping import get_zone_from_coordinates
+except ImportError:
+    try:
+        from gps_zone_mapping import get_zone_from_coordinates
+    except ImportError:
+        def get_zone_from_coordinates(lat: float, lng: float) -> str:
+            """Fallback nearest-zone resolver when gps_zone_mapping module is unavailable."""
+            # Keep this list in sync with CLAIM_ZONE_CENTERS so signup still works.
+            zone_centers = {
+                "koramangala_blr": (12.9352, 77.6245),
+                "indiranagar_blr": (12.9784, 77.6408),
+                "whitefield_blr": (12.9698, 77.7500),
+                "hsr_layout_blr": (12.9116, 77.6472),
+                "electronic_city_blr": (12.8456, 77.6603),
+                "coimbatore_gandhipuram": (11.0168, 76.9558),
+                "coimbatore_rs_puram": (11.0120, 76.9490),
+                "coimbatore_peelamedu": (11.0250, 77.0020),
+                "coimbatore_saibaba_colony": (11.0210, 76.9650),
+                "coimbatore_race_course": (11.0008, 76.9620),
+            }
+
+            def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+                radius_km = 6371.0
+                delta_lat = math.radians(lat2 - lat1)
+                delta_lon = math.radians(lon2 - lon1)
+                a = (
+                    math.sin(delta_lat / 2) ** 2
+                    + math.cos(math.radians(lat1))
+                    * math.cos(math.radians(lat2))
+                    * math.sin(delta_lon / 2) ** 2
+                )
+                return 2 * radius_km * math.asin(math.sqrt(a))
+
+            nearest_zone = "unknown_zone"
+            nearest_distance = float("inf")
+            for zone_id, (zone_lat, zone_lon) in zone_centers.items():
+                distance = _haversine_km(lat, lng, zone_lat, zone_lon)
+                if distance < nearest_distance:
+                    nearest_distance = distance
+                    nearest_zone = zone_id
+            return nearest_zone
 
 try:
     from .imd_alerts import (
@@ -263,6 +306,19 @@ ZONE_CONFIG: dict[str, str] = {
     "coimbatore_peelamedu": "Coimbatore,IN",
     "coimbatore_saibaba_colony": "Coimbatore,IN",
     "coimbatore_race_course": "Coimbatore,IN",
+}
+
+ZONE_DISPLAY_MAP: dict[str, tuple[str, str]] = {
+    "koramangala_blr": ("Bengaluru", "Koramangala"),
+    "indiranagar_blr": ("Bengaluru", "Indiranagar"),
+    "whitefield_blr": ("Bengaluru", "Whitefield"),
+    "hsr_layout_blr": ("Bengaluru", "HSR Layout"),
+    "electronic_city_blr": ("Bengaluru", "Electronic City"),
+    "coimbatore_gandhipuram": ("Coimbatore", "Gandhipuram"),
+    "coimbatore_rs_puram": ("Coimbatore", "RS Puram"),
+    "coimbatore_peelamedu": ("Coimbatore", "Peelamedu"),
+    "coimbatore_saibaba_colony": ("Coimbatore", "Saibaba Colony"),
+    "coimbatore_race_course": ("Coimbatore", "Race Course"),
 }
 
 ZONE_ACTIVITY_DATA: dict[str, dict] = {
@@ -1464,14 +1520,9 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
     if alert_for_adjustment is not None:
         weather_risk = _apply_imd_adjustment_to_risk(weather_risk, alert_for_adjustment)
 
-    coverage_hours = adjust_coverage_hours(
-        lost_hours=payload.hours_lost,
-        weather_risk_score=int(weather_risk.get("weather_risk_score", 0)),
-        trigger_probability=float(weather_risk.get("trigger_probability", 0.0)),
-    )
-    adjusted_hours = float(coverage_hours["adjusted_hours"])
-    coverage_hour_adjustment = float(coverage_hours["coverage_hour_adjustment"])
-    adjustment_reason = str(coverage_hours["adjustment_reason"])
+    history_adjusted_hours = float(payload.hours_lost)
+    history_coverage_hour_adjustment = 0.0
+    history_best_payout = -1.0
 
     trigger_specs = [
         {
@@ -1700,6 +1751,19 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             else:
                 severity_multiplier = float(spec["severity_multiplier"])
 
+            coverage_hours = adjust_coverage_hours(
+                lost_hours=payload.hours_lost,
+                weather_risk_score=int(weather_risk.get("weather_risk_score", 0)),
+                trigger_probability=float(weather_risk.get("trigger_probability", 0.0)),
+                trigger_name=str(spec["name"]),
+                trigger_value=float(spec["value"]) if spec["value"] is not None else None,
+                trigger_threshold=float(spec["threshold"]) if spec["threshold"] is not None else None,
+                severity_multiplier=severity_multiplier,
+            )
+            adjusted_hours = float(coverage_hours["adjusted_hours"])
+            coverage_hour_adjustment = float(coverage_hours["coverage_hour_adjustment"])
+            adjustment_reason = str(coverage_hours["adjustment_reason"])
+
             raw_amount = adjusted_hours * hourly_rate * severity_multiplier
             final_amount = min(raw_amount, daily_cap)
             _hrs = int(payload.hours_lost) if payload.hours_lost == int(payload.hours_lost) else payload.hours_lost
@@ -1709,12 +1773,34 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             if abs(coverage_hour_adjustment) >= 0.01:
                 sign = "+" if coverage_hour_adjustment >= 0 else ""
                 adjustment_suffix = f" ({sign}{coverage_hour_adjustment}h)"
-            ml_future_loss_probability = float(min(1.0, max(0.0, float(weather_risk.get("trigger_probability", 0.0)))))
+
+            threshold_value = float(spec["threshold"]) if spec["threshold"] is not None else None
+            measured_value = float(spec["value"]) if spec["value"] is not None else None
+            exceed_ratio = 0.0
+            if threshold_value is not None and threshold_value > 0 and measured_value is not None:
+                if str(spec["name"]) == "poor_visibility":
+                    exceed_ratio = max(0.0, (threshold_value - measured_value) / threshold_value)
+                else:
+                    exceed_ratio = max(0.0, (measured_value - threshold_value) / threshold_value)
+
+            base_probability = float(weather_risk.get("trigger_probability", 0.0))
+            ml_future_loss_probability = float(
+                min(
+                    1.0,
+                    max(
+                        0.0,
+                        base_probability
+                        + (max(0.0, severity_multiplier - 1.0) * 0.18)
+                        + (exceed_ratio * 0.22),
+                    ),
+                )
+            )
             ml_prob_pct = int(round(ml_future_loss_probability * 100.0))
             if coverage_hour_adjustment > 0:
+                extra_payout = round(coverage_hour_adjustment * hourly_rate * severity_multiplier, 2)
                 ml_future_loss_summary = (
-                    f"ML forecast: {ml_prob_pct}% chance of extended disruption; coverage hours were increased by "
-                    f"{coverage_hour_adjustment}h."
+                    f"ML forecast: {ml_prob_pct}% chance this disruption continues; added {coverage_hour_adjustment}h "
+                    f"coverage (+₹{extra_payout}) beyond reported time."
                 )
             elif coverage_hour_adjustment < 0:
                 ml_future_loss_summary = (
@@ -1737,6 +1823,11 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
                 final_amount=round(final_amount, 2),
                 formula=f"{_hrs}h{adjustment_suffix} -> {_adj_hrs}h × ₹{int(hourly_rate)} × {severity_multiplier} = ₹{_fa}",
             )
+
+            if payout_response.final_amount >= history_best_payout:
+                history_best_payout = payout_response.final_amount
+                history_adjusted_hours = adjusted_hours
+                history_coverage_hour_adjustment = coverage_hour_adjustment
 
             highest_fraud = max(highest_fraud, fraud_score)
         claim_trigger_responses.append(
@@ -1838,8 +1929,8 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
             "payout_amount": payout_amount,
             "zone_id": payload.zone_id,
             "hours_lost": payload.hours_lost,
-            "adjusted_hours": adjusted_hours,
-            "coverage_hour_adjustment": coverage_hour_adjustment,
+            "adjusted_hours": history_adjusted_hours,
+            "coverage_hour_adjustment": history_coverage_hour_adjustment,
             "hourly_rate": hourly_rate,
             "multiplier": 1.0,
         }
@@ -2235,6 +2326,14 @@ class CityZonesResponse(BaseModel):
     zones: list[dict[str, str]]
 
 
+class NearestZoneResponse(BaseModel):
+    zone_id: str
+    city: str
+    area: str
+    lat: float
+    lon: float
+
+
 class CityWeatherResponse(BaseModel):
     city: str
     condition: str
@@ -2405,6 +2504,31 @@ def _zone_slug(city: str, area: str) -> str:
     return (
         f"{city.lower().replace(' ', '_')}_{area.lower().replace(' ', '_').replace('.', '').replace(',', '')}"
     )
+
+
+def _zone_city_area_from_zone_id(zone_id: str) -> tuple[str, str]:
+    mapped = ZONE_DISPLAY_MAP.get(zone_id)
+    if mapped is not None:
+        return mapped
+
+    normalized = zone_id.strip().lower()
+    if normalized.endswith("_blr"):
+        area_raw = normalized.removesuffix("_blr")
+        return ("Bengaluru", " ".join(token.capitalize() for token in area_raw.split("_")))
+
+    if normalized.startswith("coimbatore_"):
+        area_raw = normalized.removeprefix("coimbatore_")
+        return ("Coimbatore", " ".join(token.capitalize() for token in area_raw.split("_")))
+
+    if "_" in normalized:
+        city_raw, area_raw = normalized.split("_", 1)
+        return (
+            " ".join(token.capitalize() for token in city_raw.split("_")),
+            " ".join(token.capitalize() for token in area_raw.split("_")),
+        )
+
+    fallback = " ".join(token.capitalize() for token in normalized.split("_"))
+    return (fallback or "Bengaluru", fallback or "Unknown Area")
 
 
 def _zone_microclimate_adjustment(city: str, area: str) -> dict[str, float]:
@@ -3097,6 +3221,21 @@ def _fallback_zone_activity(zone_id: str):
     return None
 
 
+def _city_weather_fallback_from_zone(zone_id: str) -> dict | None:
+    """Build a basic weather context from city token when no zone event exists."""
+    city_token = zone_id.split("_", 1)[0].strip().lower()
+    if not city_token:
+        return None
+    if city_token not in mock_rainfall_by_city:
+        return None
+    return {
+        "rainfall": float(mock_rainfall_by_city.get(city_token, 0.0)),
+        "temperature": 34.0,
+        "humidity": 65.0,
+        "wind_speed": 12.0,
+    }
+
+
 @app.get("/api/risk/{zone_id}", response_model=WeatherRiskResponse)
 def get_zone_weather_risk(zone_id: str):
     latest_event = raw_event_repository.get_latest_by_zone(zone_id)
@@ -3104,16 +3243,19 @@ def get_zone_weather_risk(zone_id: str):
         # Fallback: try another zone in the same city (same weather data)
         latest_event = _fallback_zone_weather(zone_id)
     if latest_event is None:
-        raise HTTPException(status_code=404, detail="No weather data found for zone")
-
-    risk = calculate_weather_risk(
-        {
-            "rainfall": latest_event.rainfall,
-            "temperature": latest_event.temperature,
-            "humidity": latest_event.humidity,
-            "wind_speed": latest_event.wind_speed,
-        }
-    )
+        city_weather = _city_weather_fallback_from_zone(zone_id)
+        if city_weather is None:
+            raise HTTPException(status_code=404, detail="No weather data found for zone")
+        risk = calculate_weather_risk(city_weather)
+    else:
+        risk = calculate_weather_risk(
+            {
+                "rainfall": latest_event.rainfall,
+                "temperature": latest_event.temperature,
+                "humidity": latest_event.humidity,
+                "wind_speed": latest_event.wind_speed,
+            }
+        )
     imd_alert = _get_latest_alert_for_context(zone_id)
     risk = _apply_imd_adjustment_to_risk(risk, imd_alert)
 
@@ -3144,21 +3286,24 @@ def get_trigger_check(zone_id: str):
     latest_event = raw_event_repository.get_latest_by_zone(zone_id)
     if latest_event is None:
         latest_event = _fallback_zone_weather(zone_id)
-    if latest_event is None:
-        raise HTTPException(status_code=404, detail="No weather data found for zone")
-
     activity_data = ZONE_ACTIVITY_DATA.get(zone_id) or _fallback_zone_activity(zone_id)
     if activity_data is None:
-        raise HTTPException(status_code=404, detail="No activity data found for zone")
+        activity_data = {"active_workers": 40, "idle_workers": 10, "avg_distance": 3.5}
 
-    weather_risk = calculate_weather_risk(
-        {
-            "rainfall": latest_event.rainfall,
-            "temperature": latest_event.temperature,
-            "humidity": latest_event.humidity,
-            "wind_speed": latest_event.wind_speed,
-        }
-    )
+    if latest_event is None:
+        city_weather = _city_weather_fallback_from_zone(zone_id)
+        if city_weather is None:
+            raise HTTPException(status_code=404, detail="No weather data found for zone")
+        weather_risk = calculate_weather_risk(city_weather)
+    else:
+        weather_risk = calculate_weather_risk(
+            {
+                "rainfall": latest_event.rainfall,
+                "temperature": latest_event.temperature,
+                "humidity": latest_event.humidity,
+                "wind_speed": latest_event.wind_speed,
+            }
+        )
     imd_alert = _get_latest_alert_for_context(zone_id)
     weather_risk = _apply_imd_adjustment_to_risk(weather_risk, imd_alert)
 
@@ -3303,6 +3448,23 @@ def city_zones(city: str):
     return {
         "city": normalized_city,
         "zones": zones,
+    }
+
+
+@app.get("/api/location/nearest-zone", response_model=NearestZoneResponse)
+def nearest_zone_from_coordinates(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+):
+    zone_id = get_zone_from_coordinates(lat=lat, lng=lon)
+    city, area = _zone_city_area_from_zone_id(zone_id)
+
+    return {
+        "zone_id": zone_id,
+        "city": city,
+        "area": area,
+        "lat": lat,
+        "lon": lon,
     }
 
 

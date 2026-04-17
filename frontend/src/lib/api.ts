@@ -76,6 +76,19 @@ export interface CityZone {
 export const getCityZones = (city: string) =>
   request<{ city: string; zones: CityZone[] }>(`/api/city-zones?city=${encodeURIComponent(city)}`);
 
+export interface NearestZoneFromLocation {
+  zone_id: string;
+  city: string;
+  area: string;
+  lat: number;
+  lon: number;
+}
+
+export const getNearestZoneFromLocation = (lat: number, lon: number) =>
+  request<NearestZoneFromLocation>(
+    `/api/location/nearest-zone?lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lon))}`,
+  );
+
 export interface CityWeather {
   city: string;
   condition: string;

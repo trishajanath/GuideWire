@@ -11,24 +11,7 @@ import {
   Wifi,
   Wind,
   Info,
-  Loader2,
-  Play,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  evaluateClaimEngine,
-  processPayout,
-  ZONES,
-  type ClaimEvaluateResult,
-  type PayoutTransaction,
-} from "@/lib/api";
-
-interface TriggerLabProps {
-  workerId: number;
-  zoneId: string;
-  city: string;
-  onClaimResult?: (result: ClaimEvaluateResult, payoutTxn: PayoutTransaction | null) => void;
-}
 
 const TRIGGER_SCENARIOS_STORAGE_KEY = "guidewire.triggerlab.selectedScenarios";
 
@@ -80,21 +63,7 @@ const SCENARIOS: SimulationScenario[] = [
   { id: "infrastructure_failure", category: "external", label: "Infrastructure Failure", subtitle: "Road closures / utility outage", icon: RadioTower, badge: "Manual" },
 ];
 
-const cityKey = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ").replace("bangalore", "bengaluru");
-
-const cityGps: Record<string, { lat: number; lon: number }> = {
-  bengaluru: { lat: 12.9716, lon: 77.5946 },
-  coimbatore: { lat: 11.0168, lon: 76.9558 },
-  mumbai: { lat: 19.076, lon: 72.8777 },
-  chennai: { lat: 13.0827, lon: 80.2707 },
-  kochi: { lat: 9.9312, lon: 76.2673 },
-  kolkata: { lat: 22.5726, lon: 88.3639 },
-  hyderabad: { lat: 17.385, lon: 78.4867 },
-  delhi: { lat: 28.6139, lon: 77.209 },
-};
-
-export default function TriggerLab({ workerId, zoneId, city, onClaimResult }: TriggerLabProps) {
-  const [selectedZone, setSelectedZone] = useState(zoneId);
+export default function TriggerLab() {
   const [selectedScenarios, setSelectedScenarios] = useState<Set<SimulationScenario["id"]>>(() => {
     if (typeof window === "undefined") return new Set();
     try {
@@ -108,24 +77,12 @@ export default function TriggerLab({ workerId, zoneId, city, onClaimResult }: Tr
       return new Set();
     }
   });
-  const [hoursLost, setHoursLost] = useState(0);
-
-  const normalizedCity = cityKey(city);
-  const cityZones = useMemo(() => ZONES.filter((zone) => cityKey(zone.city) === normalizedCity), [normalizedCity]);
-  const gps = useMemo(() => cityGps[normalizedCity] ?? cityGps.bengaluru, [normalizedCity]);
-
-  useEffect(() => {
-    if (!selectedZone && cityZones.length > 0) {
-      setSelectedZone(cityZones[0].id);
-    }
-  }, [cityZones, selectedZone]);
-
   useEffect(() => {
     setSelectedScenarios((current) => {
       const next = new Set([...current].filter((scenarioId) => SCENARIOS.some((item) => item.id === scenarioId)));
       return next;
     });
-  }, [city]);
+  }, []);
 
   const scenariosByCategory = useMemo(() => {
     return SIMULATION_GROUPS.map((group) => ({
@@ -167,57 +124,6 @@ export default function TriggerLab({ workerId, zoneId, city, onClaimResult }: Tr
 
   const selectedScenarioCount = selectedScenarioList.length;
 
-  const [claimLoading, setClaimLoading] = useState(false);
-  const [claimError, setClaimError] = useState("");
-
-  const GATEWAYS = ["razorpay", "upi_direct", "stripe"] as const;
-
-  const runClaim = async () => {
-    if (selectedScenarioCount === 0) return;
-    setClaimLoading(true);
-    setClaimError("");
-    try {
-      const scenarios = selectedScenarioList as Array<
-        Exclude<Parameters<typeof evaluateClaimEngine>[0]["demo_scenario"], "none" | undefined>
-      >;
-      const res = await evaluateClaimEngine({
-        worker_id: workerId,
-        zone_id: selectedZone,
-        city,
-        gps_lat: gps.lat,
-        gps_lon: gps.lon,
-        hours_lost: Math.max(0, hoursLost),
-        app_active: true,
-        demo_mode: true,
-        demo_scenario: scenarios[0],
-        demo_scenarios: scenarios,
-      });
-
-      let txn: PayoutTransaction | null = null;
-      if (
-        (res.claim_status === "auto-approve" || res.claim_status === "approve-with-flag") &&
-        res.payout_amount > 0
-      ) {
-        try {
-          const gateway = GATEWAYS[Math.floor(Math.random() * GATEWAYS.length)];
-          txn = await processPayout({
-            worker_id: workerId,
-            claim_id: `CLM-${Date.now()}`,
-            amount: res.payout_amount,
-            gateway,
-            upi_id: "worker@upi",
-          });
-        } catch { /* payout failed silently */ }
-      }
-
-      onClaimResult?.(res, txn);
-    } catch (err: any) {
-      setClaimError(err?.message ?? "Claim failed");
-    } finally {
-      setClaimLoading(false);
-    }
-  };
-
   return (
     <div className="space-y-4">
       <div className="flex items-start gap-3">
@@ -228,39 +134,6 @@ export default function TriggerLab({ workerId, zoneId, city, onClaimResult }: Tr
           <h3 className="text-base font-bold text-foreground">Claim Simulator</h3>
           <p className="text-[11px] text-muted-foreground">Desktop-side category simulator, separate from the phone</p>
         </div>
-      </div>
-
-      <div className="card-premium rounded-2xl p-4 space-y-3">
-        <p className="text-[10px] font-bold text-muted-foreground/60 uppercase tracking-wider">Simulation setup</p>
-        <div className="grid grid-cols-2 gap-2">
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Worker zone</span>
-            <input
-              value={selectedZone}
-              onChange={(e) => setSelectedZone(e.target.value)}
-              list="worker-zone-suggestions"
-              placeholder="Type zone id or area"
-              className="w-full bg-secondary/60 border border-border/30 rounded-lg px-2.5 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
-            >
-            </input>
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Lost hours</span>
-            <input
-              type="number"
-              min={0}
-              max={12}
-              value={hoursLost}
-              onChange={(e) => setHoursLost(Number(e.target.value || 0))}
-              className="w-full bg-secondary/60 border border-border/30 rounded-lg px-2.5 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
-            />
-          </label>
-        </div>
-        <datalist id="worker-zone-suggestions">
-          {cityZones.map((zone) => (
-            <option key={zone.id} value={zone.id} />
-          ))}
-        </datalist>
       </div>
 
       <div className="space-y-3">
@@ -323,32 +196,17 @@ export default function TriggerLab({ workerId, zoneId, city, onClaimResult }: Tr
 
       <div className="flex gap-2">
         <button
-          onClick={runClaim}
-          disabled={claimLoading || selectedScenarioCount === 0}
-          className="flex-1 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-40 flex items-center justify-center gap-2"
-        >
-          {claimLoading ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /> Running…</>
-          ) : (
-            <><Play className="w-4 h-4" /> Run Claim ({selectedScenarioCount})</>
-          )}
-        </button>
-        <button
           onClick={clearScenarios}
-          className="rounded-xl border border-border/60 bg-secondary/40 px-4 py-3 text-sm font-semibold text-foreground"
+          className="w-full rounded-xl border border-border/60 bg-secondary/40 px-4 py-3 text-sm font-semibold text-foreground"
         >
           Clear
         </button>
       </div>
 
-      {claimError && (
-        <p className="text-xs text-destructive">{claimError}</p>
-      )}
-
       <div className="rounded-xl border border-border/30 bg-secondary/30 px-3 py-2 flex items-start gap-2">
         <Info className="w-3.5 h-3.5 text-muted-foreground mt-0.5" />
         <p className="text-[11px] text-muted-foreground leading-relaxed">
-          Select triggers and click <span className="text-foreground font-semibold">Run Claim</span> to simulate — results appear on the phone screen.
+          Select triggers here, then switch to <span className="text-foreground font-semibold">Fraud Spoofing</span> to run the claim.
         </p>
       </div>
     </div>

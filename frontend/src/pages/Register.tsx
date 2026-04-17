@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import MobileShell from "@/components/MobileShell";
 import { saveCurrentUser } from "@/lib/session";
-import { CityZone, getCityZones, registerUser, sendOTP, verifyOTP, ZONES } from "@/lib/api";
+import { CityZone, getCityZones, getNearestZoneFromLocation, registerUser, sendOTP, verifyOTP, ZONES } from "@/lib/api";
 
 /* Bangalore delivery zones */
 
@@ -43,6 +43,9 @@ const Register = () => {
   const [cityFocused, setCityFocused] = useState(false);
   const [cityLoading, setCityLoading] = useState(false);
   const [zonesLoading, setZonesLoading] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [locationStatus, setLocationStatus] = useState("");
+  const [didAutoLocate, setDidAutoLocate] = useState(false);
   const [placesReady, setPlacesReady] = useState(false);
   const [zoneId, setZoneId] = useState("");
   const [zoneArea, setZoneArea] = useState("");
@@ -205,6 +208,49 @@ const Register = () => {
       window.clearTimeout(timer);
     };
   }, [city]);
+
+  const detectAndMapNearestZone = async () => {
+    if (typeof window === "undefined" || !("geolocation" in window.navigator)) {
+      setLocationStatus("Location access is unavailable on this device. Enter city manually.");
+      return;
+    }
+
+    setLocating(true);
+    setLocationStatus("Detecting your location...");
+
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        window.navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 12000,
+          maximumAge: 300000,
+        });
+      });
+
+      const nearest = await getNearestZoneFromLocation(
+        position.coords.latitude,
+        position.coords.longitude,
+      );
+
+      setCity(nearest.city);
+      setZoneId(nearest.zone_id);
+      setZoneArea(nearest.area);
+      setLocationStatus(`Detected ${nearest.area}, ${nearest.city}`);
+    } catch {
+      setLocationStatus("Could not detect your location. Enter city manually.");
+    } finally {
+      setLocating(false);
+      setDidAutoLocate(true);
+    }
+  };
+
+  useEffect(() => {
+    if (step !== "profile") return;
+    if (didAutoLocate) return;
+    if (city.trim()) return;
+    detectAndMapNearestZone();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, didAutoLocate, city]);
 
   const handleSendOtp = async () => {
     const normalizedPhone = phone.replace(/\D/g, "").slice(-10);
@@ -430,6 +476,19 @@ const Register = () => {
                   <label className="text-sm font-semibold text-foreground mb-2 block">
                     <MapPin size={14} className="inline mr-1" /> City
                   </label>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-muted-foreground">
+                      {locationStatus || "We'll auto-detect and map your nearest zone."}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={detectAndMapNearestZone}
+                      disabled={locating}
+                      className="text-[11px] font-semibold text-primary disabled:opacity-50"
+                    >
+                      {locating ? "Locating..." : "Use current location"}
+                    </button>
+                  </div>
                   <div className="relative">
                     <Input
                       placeholder="Enter your city"

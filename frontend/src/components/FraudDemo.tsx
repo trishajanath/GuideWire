@@ -361,6 +361,7 @@ export default function FraudDemo({ workerId, zoneId, city, onClaimResult }: Fra
   const demoScenario = !anyActive || hasNoDisruption ? ("none" as const) : ("heavy_rain" as const);
 
   const activeCount = activeScenarios.size;
+  const canRunFromLinkedTriggers = linkedTriggerScenarios.length > 0;
   const linkedTriggerLabel =
     linkedTriggerScenarios.length === 0
       ? "No linked trigger"
@@ -383,6 +384,7 @@ export default function FraudDemo({ workerId, zoneId, city, onClaimResult }: Fra
   );
 
   const runClaim = async () => {
+    if (!canRunFromLinkedTriggers) return;
     setLoading(true);
     setResult(null);
     setPayoutTxn(null);
@@ -604,9 +606,11 @@ export default function FraudDemo({ workerId, zoneId, city, onClaimResult }: Fra
       {/* ─── Submit button ───────────────── */}
       <button
         onClick={runClaim}
-        disabled={loading}
+        disabled={loading || !canRunFromLinkedTriggers}
         className={`w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl text-sm font-bold transition-all ${
-          anyActive
+          !canRunFromLinkedTriggers
+            ? "bg-foreground/5 border border-border/30 text-muted-foreground"
+            : anyActive
             ? "bg-destructive/15 border border-destructive/30 text-destructive hover:bg-destructive/20 active:bg-destructive/25"
             : "bg-primary/15 border border-primary/30 text-primary hover:bg-primary/20 active:bg-primary/25"
         } disabled:opacity-50`}
@@ -615,6 +619,11 @@ export default function FraudDemo({ workerId, zoneId, city, onClaimResult }: Fra
           <>
             <Loader2 className="w-4 h-4 animate-spin" />
             Processing claim…
+          </>
+        ) : !canRunFromLinkedTriggers ? (
+          <>
+            <Play className="w-4 h-4" />
+            Select triggers in Claim Simulator first
           </>
         ) : anyActive ? (
           <>
@@ -968,9 +977,18 @@ export default function FraudDemo({ workerId, zoneId, city, onClaimResult }: Fra
         <div className="flex items-start gap-2 rounded-lg bg-secondary/40 border border-border/20 px-3 py-2">
           <Info className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
           <p className="text-[11px] text-muted-foreground leading-relaxed">
-            <span className="font-medium text-foreground">To test a payout:</span> Submit a clean claim
-            with no scenarios active — the engine will auto-approve and calculate ₹ amount.
-            Toggle scenarios to see the fraud engine block or flag the claim.
+            {!canRunFromLinkedTriggers ? (
+              <>
+                <span className="font-medium text-foreground">Start in Claim Simulator:</span> choose at least one trigger,
+                then come back here to run claim simulation.
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-foreground">To test a payout:</span> submit a clean claim
+                with no fraud toggles active — the engine can auto-approve and calculate ₹ amount.
+                Toggle fraud scenarios to see the engine block or flag the claim.
+              </>
+            )}
           </p>
         </div>
       )}
