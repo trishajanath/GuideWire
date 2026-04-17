@@ -151,6 +151,8 @@ function buildFraudAssessment(result: ClaimEvaluateResult): FraudAssessment | nu
             : claimStatus === "hold-for-review"
               ? "Fraud signals detected — claim held for manual review."
               : "No parametric trigger fired.",
+    ml_ensemble: fired.fraud.ml_ensemble,
+    worker_risk_profile: fired.fraud.worker_risk_profile,
   } as FraudAssessment;
 }
 
@@ -252,6 +254,7 @@ interface FraudDemoProps {
   workerId: number;
   zoneId: string;
   city: string;
+  onClaimResult?: (result: ClaimEvaluateResult, payoutTxn: PayoutTransaction | null) => void;
 }
 
 const TRIGGER_SCENARIOS_STORAGE_KEY = "guidewire.triggerlab.selectedScenarios";
@@ -275,7 +278,7 @@ const readStoredTriggerScenarios = (): string[] => {
   }
 };
 
-export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
+export default function FraudDemo({ workerId, zoneId, city, onClaimResult }: FraudDemoProps) {
   // Editable claim fields
   const [selectedZone, setSelectedZone] = useState(zoneId);
   const [spoofTarget, setSpoofTarget] = useState("bengaluru");
@@ -391,7 +394,9 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
     if (hasNoDisruption) {
       scenarioSet.clear();
     }
-    const combinedScenarios = Array.from(scenarioSet);
+    const combinedScenarios = Array.from(scenarioSet) as Array<
+      Exclude<Parameters<typeof evaluateClaimEngine>[0]["demo_scenario"], "none" | undefined>
+    >;
 
     // Only send overrides when fraud toggles are active.
     const hasFraudOverrides = hasGpsSpoof || hasAppInactive || hasDuplicate || hasVpn;
@@ -422,6 +427,7 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
       });
       setResult(res);
 
+      let finalTxn: PayoutTransaction | null = null;
       if (
         (res.claim_status === "auto-approve" || res.claim_status === "approve-with-flag") &&
         res.payout_amount > 0
@@ -437,6 +443,7 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
             upi_id: "worker@upi",
           });
           setPayoutTxn(txn);
+          finalTxn = txn;
         } catch {
           // payout processing failed silently — claim result remains visible
         } finally {
@@ -444,6 +451,7 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
         }
       }
 
+      onClaimResult?.(res, finalTxn);
       setRunCount((c) => c + 1);
     } catch {
       // Silently handle
@@ -654,9 +662,85 @@ export default function FraudDemo({ workerId, zoneId, city }: FraudDemoProps) {
               <span>
                 Risk: <span className="font-mono font-bold text-foreground">{(result.fraud_score * 100).toFixed(0)}%</span>
               </span>
+              {fraudAssessment?.ml_ensemble && (
+                <span>
+                  ML: <span className="font-mono font-bold text-primary">{(fraudAssessment.ml_ensemble.fraud_probability * 100).toFixed(0)}%</span>
+                </span>
+              )}
+              {fraudAssessment?.worker_risk_profile && (
+                <span>
+                  Trust: <span className={`font-mono font-bold ${fraudAssessment.worker_risk_profile.trust_score > 0.6 ? "text-accent-green" : "text-warning"}`}>
+                    {(fraudAssessment.worker_risk_profile.trust_score * 100).toFixed(0)}%
+                  </span>
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-muted-foreground leading-relaxed">{result.explanation}</p>
           </div>
+
+          {/* ── ML Ensemble Insight ── */}
+          {fraudAssessment?.ml_ensemble && (
+            <div className="rounded-xl bg-primary/5 border border-primary/20 p-3 space-y-2">
+              <p className="text-[11px] font-bold text-primary flex items-center gap-1">
+                <Zap className="w-3 h-3" />
+                ML Ensemble Second Opinion
+              </p>
+              <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                <span>Probability: <span className="font-mono font-bold text-foreground">{(fraudAssessment.ml_ensemble.fraud_probability * 100).toFixed(1)}%</span></span>
+                <span>Risk: <span className="font-medium text-foreground uppercase">{fraudAssessment.ml_ensemble.risk_level}</span></span>
+                <span>{fraudAssessment.ml_ensemble.allow_payout ? "✅ Allow" : "❌ Block"}</span>
+              </div>
+              {fraudAssessment.ml_ensemble.top_drivers.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[10px] text-muted-foreground/50 uppercase tracking-wider">Top Drivers</p>
+                  {fraudAssessment.ml_ensemble.top_drivers.slice(0, 4).map((d: any, i: number) => {
+                    const fname = Array.isArray(d) ? d[0] : d.feature ?? "";
+                    const contrib = Array.isArray(d) ? d[1] : d.contribution ?? 0;
+                    return (
+                    <div key={i} className="flex items-center gap-2">
+                      <div className="flex-1 h-1.5 rounded-full bg-foreground/[0.06] overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${contrib > 0 ? "bg-destructive/60" : "bg-accent-green/60"}`}
+                          style={{ width: `${Math.min(Math.abs(contrib) * 100, 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] text-muted-foreground/60 w-28 truncate">{String(fname).replace(/_/g, " ")}</span>
+                      <span className={`text-[10px] font-mono ${contrib > 0 ? "text-destructive" : "text-accent-green"}`}>
+                        {contrib > 0 ? "+" : ""}{(contrib * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Worker Risk Profile ── */}
+          {fraudAssessment?.worker_risk_profile && (
+            <div className={`rounded-xl border p-3 space-y-1 ${
+              fraudAssessment.worker_risk_profile.category === "trusted" ? "bg-accent-green/5 border-accent-green/20" :
+              fraudAssessment.worker_risk_profile.category === "flagged" || fraudAssessment.worker_risk_profile.category === "blocked" ? "bg-destructive/5 border-destructive/20" :
+              "bg-foreground/[0.02] border-border/30"
+            }`}>
+              <p className="text-[11px] font-bold text-foreground/70 flex items-center gap-1">
+                <Shield className="w-3 h-3" />
+                Worker Risk Profile
+                <span className={`ml-auto text-[10px] px-2 py-0.5 rounded-full font-medium capitalize ${
+                  fraudAssessment.worker_risk_profile.category === "trusted" ? "bg-accent-green/10 text-accent-green" :
+                  fraudAssessment.worker_risk_profile.category === "flagged" ? "bg-orange-400/10 text-orange-400" :
+                  fraudAssessment.worker_risk_profile.category === "blocked" ? "bg-destructive/10 text-destructive" :
+                  "bg-foreground/5 text-foreground/60"
+                }`}>{fraudAssessment.worker_risk_profile.category}</span>
+              </p>
+              <div className="flex gap-4 text-[11px] text-muted-foreground">
+                <span>EMA Risk: <span className="font-mono text-foreground">{(fraudAssessment.worker_risk_profile.ema_risk * 100).toFixed(0)}%</span></span>
+                <span>Trust: <span className="font-mono text-foreground">{(fraudAssessment.worker_risk_profile.trust_score * 100).toFixed(0)}%</span></span>
+                <span>Claims: <span className="font-mono text-foreground">{fraudAssessment.worker_risk_profile.claim_count}</span></span>
+                <span>Streak: <span className="font-mono text-accent-green">{fraudAssessment.worker_risk_profile.clean_streak}</span></span>
+              </div>
+            </div>
+          )}
 
           {/* What was caught */}
           {anyActive && (

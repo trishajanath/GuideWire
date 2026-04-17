@@ -3,13 +3,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import r2_score
-from sklearn.model_selection import train_test_split
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import r2_score, mean_absolute_error
+from sklearn.model_selection import train_test_split, cross_val_score, KFold
+import joblib
 
 logger = logging.getLogger("guidewire.premium_engine")
 
@@ -86,12 +88,17 @@ FEATURE_COLUMNS = [
     "tenure_norm",
     "claim_ratio",
     "hours_norm",
+    "flood_x_monsoon",      # interaction: flood risk amplified during monsoon
+    "hours_x_claim_ratio",  # interaction: high hours + high claims = risky
 ]
 
 MONTHS_IN_MONSOON = {6, 7, 8, 9}
 
-_model: LinearRegression | None = None
+_PREMIUM_MODEL_PATH = Path(__file__).parent / "ml" / "models" / "premium_gbr.joblib"
+
+_model: GradientBoostingRegressor | None = None
 _model_r2: float | None = None
+_model_mae: float | None = None
 _model_coefficients: dict[str, float] = {}
 _model_intercept: float | None = None
 _trained_at: str | None = None
@@ -143,7 +150,7 @@ def get_premium_zones() -> list[dict[str, object]]:
     ]
 
 
-def _build_training_frame(n_samples: int = 500, seed: int = 42) -> pd.DataFrame:
+def _build_training_frame(n_samples: int = 2000, seed: int = 42) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     profiles = ZONE_PROFILES.copy()
     rows: list[dict[str, float]] = []
@@ -163,7 +170,11 @@ def _build_training_frame(n_samples: int = 500, seed: int = 42) -> pd.DataFrame:
         claim_ratio = float(np.clip(claims_paid / max(premium_paid, 1.0), 0, 2))
         hours_norm = float(min(1.0, avg_daily_hours / 12.0))
 
-        # Synthetic target: tuned to stay within -15 to +25 while preserving linear structure.
+        # Interaction features
+        flood_x_monsoon = flood_score * monsoon_flag
+        hours_x_claim_ratio = hours_norm * claim_ratio
+
+        # Synthetic target: non-linear to benefit from GBR
         raw_adjustment = (
             -7.5
             + flood_score * 16.0
@@ -173,6 +184,9 @@ def _build_training_frame(n_samples: int = 500, seed: int = 42) -> pd.DataFrame:
             - tenure_norm * 8.0
             + claim_ratio * 5.8
             + hours_norm * 6.5
+            + flood_x_monsoon * 6.0    # flood during monsoon = much worse
+            + hours_x_claim_ratio * 3.5  # high hours + high claims = risky combo
+            + (flood_score ** 2) * 4.0   # non-linear flood impact
             + rng.normal(0, 1.5)
         )
         premium_adjustment = float(np.clip(raw_adjustment, -15, 25))
@@ -186,6 +200,8 @@ def _build_training_frame(n_samples: int = 500, seed: int = 42) -> pd.DataFrame:
                 "tenure_norm": tenure_norm,
                 "claim_ratio": claim_ratio,
                 "hours_norm": hours_norm,
+                "flood_x_monsoon": flood_x_monsoon,
+                "hours_x_claim_ratio": hours_x_claim_ratio,
                 "premium_adjustment": premium_adjustment,
             }
         )
@@ -193,10 +209,25 @@ def _build_training_frame(n_samples: int = 500, seed: int = 42) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _ensure_model_trained() -> LinearRegression:
-    global _model, _model_r2, _model_coefficients, _model_intercept, _trained_at
+def _ensure_model_trained() -> GradientBoostingRegressor:
+    global _model, _model_r2, _model_coefficients, _model_intercept, _trained_at, _model_mae
     if _model is not None:
         return _model
+
+    # Try loading persisted model first
+    if _PREMIUM_MODEL_PATH.exists():
+        try:
+            saved = joblib.load(_PREMIUM_MODEL_PATH)
+            _model = saved["model"]
+            _model_r2 = saved.get("r2", 0.0)
+            _model_mae = saved.get("mae", 0.0)
+            _model_coefficients = saved.get("importances", {})
+            _model_intercept = 0.0
+            _trained_at = saved.get("trained_at", "loaded")
+            logger.info("Premium GBR loaded from disk (R2=%.3f)", _model_r2)
+            return _model
+        except Exception as e:
+            logger.warning("Failed to load premium model: %s", e)
 
     train_premium_model()
     if _model is None:
@@ -204,36 +235,69 @@ def _ensure_model_trained() -> LinearRegression:
     return _model
 
 
-def train_premium_model(n_samples: int = 500, seed: int = 42) -> dict[str, object]:
-    global _model, _model_r2, _model_coefficients, _model_intercept, _trained_at
+def train_premium_model(n_samples: int = 2000, seed: int = 42) -> dict[str, object]:
+    global _model, _model_r2, _model_coefficients, _model_intercept, _trained_at, _model_mae
 
     frame = _build_training_frame(n_samples=n_samples, seed=seed)
     X = frame[FEATURE_COLUMNS]
     y = frame["premium_adjustment"]
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=seed)
-    model = LinearRegression()
-    model.fit(X_train, y_train)
 
+    model = GradientBoostingRegressor(
+        n_estimators=200,
+        max_depth=4,
+        learning_rate=0.08,
+        subsample=0.85,
+        min_samples_split=10,
+        min_samples_leaf=5,
+        max_features="sqrt",
+        random_state=42,
+    )
+
+    # Cross-validation
+    cv = KFold(n_splits=5, shuffle=True, random_state=42)
+    cv_r2 = cross_val_score(model, X, y, cv=cv, scoring="r2")
+    cv_mae = cross_val_score(model, X, y, cv=cv, scoring="neg_mean_absolute_error")
+
+    model.fit(X_train, y_train)
     predictions = model.predict(X_test)
     r2 = float(r2_score(y_test, predictions))
+    mae = float(mean_absolute_error(y_test, predictions))
 
     _model = model
     _model_r2 = r2
-    _model_intercept = float(model.intercept_)
+    _model_mae = mae
+    _model_intercept = 0.0  # GBR doesn't have a simple intercept
     _model_coefficients = {
-        feature: float(coefficient)
-        for feature, coefficient in zip(FEATURE_COLUMNS, model.coef_)
+        feature: float(importance)
+        for feature, importance in zip(FEATURE_COLUMNS, model.feature_importances_)
     }
     _trained_at = datetime.now().isoformat(timespec="seconds")
 
-    logger.info("Premium engine trained on %d synthetic rows (R2=%.3f)", n_samples, r2)
+    # Persist to disk
+    _PREMIUM_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump({
+        "model": model,
+        "r2": r2,
+        "mae": mae,
+        "importances": _model_coefficients,
+        "trained_at": _trained_at,
+    }, _PREMIUM_MODEL_PATH)
+
+    logger.info(
+        "Premium GBR trained on %d rows (R2=%.3f, MAE=%.2f, CV-R2=%.3f±%.3f)",
+        n_samples, r2, mae, cv_r2.mean(), cv_r2.std(),
+    )
 
     return {
         "trained_rows": n_samples,
         "r2": round(r2, 4),
-        "coefficients": _model_coefficients,
-        "intercept": _model_intercept,
+        "mae": round(mae, 3),
+        "cv_r2_mean": round(float(cv_r2.mean()), 4),
+        "cv_r2_std": round(float(cv_r2.std()), 4),
+        "cv_mae_mean": round(float(-cv_mae.mean()), 3),
+        "feature_importances": _model_coefficients,
         "trained_at": _trained_at,
     }
 
@@ -241,10 +305,12 @@ def train_premium_model(n_samples: int = 500, seed: int = 42) -> dict[str, objec
 def get_premium_model_info() -> dict[str, object]:
     _ensure_model_trained()
     return {
-        "trained_rows": 500,
+        "algorithm": "GradientBoostingRegressor",
+        "trained_rows": 2000,
         "r2": round(float(_model_r2 or 0.0), 4),
+        "mae": round(float(_model_mae or 0.0), 3),
         "intercept": float(_model_intercept or 0.0),
-        "coefficients": _model_coefficients,
+        "feature_importances": _model_coefficients,
         "features": FEATURE_COLUMNS,
         "trained_at": _trained_at,
     }
@@ -262,7 +328,11 @@ def _feature_vector_from_request(payload: PremiumRequestInput) -> tuple[dict[str
         "tenure_norm": float(min(1.0, max(0.0, payload.tenure_months / 24.0))),
         "claim_ratio": float(min(2.0, max(0.0, payload.claims_paid / max(payload.premium_paid, 1.0)))),
         "hours_norm": float(min(1.0, max(0.0, payload.avg_daily_hours / 12.0))),
+        "flood_x_monsoon": 0.0,  # computed below
+        "hours_x_claim_ratio": 0.0,  # computed below
     }
+    features["flood_x_monsoon"] = features["flood_score"] * features["monsoon_flag"]
+    features["hours_x_claim_ratio"] = features["hours_norm"] * features["claim_ratio"]
     return features, profile
 
 
@@ -274,10 +344,14 @@ def calculate_premium(payload: PremiumRequestInput) -> dict[str, object]:
     raw_adjustment = float(model.predict(feature_frame)[0])
     clipped_adjustment = float(np.clip(raw_adjustment, -15, 25))
 
+    # For GBR, use feature importance × feature value as contribution proxy
+    importances = _model_coefficients or {}
     itemised_adjustments: list[dict[str, object]] = []
     for feature_name in FEATURE_COLUMNS:
-        coefficient = float(_model_coefficients.get(feature_name, 0.0))
-        contribution = coefficient * float(features[feature_name])
+        importance = float(importances.get(feature_name, 0.0))
+        feat_val = float(features[feature_name])
+        # Contribution estimate: importance × feature value × adjustment magnitude
+        contribution = importance * feat_val * clipped_adjustment
         if abs(contribution) < 0.05:
             continue
 
@@ -289,6 +363,8 @@ def calculate_premium(payload: PremiumRequestInput) -> dict[str, object]:
             "tenure_norm": "Platform tenure",
             "claim_ratio": "Claims ratio",
             "hours_norm": "Work intensity",
+            "flood_x_monsoon": "Flood × monsoon risk",
+            "hours_x_claim_ratio": "Work × claims combo",
         }
         itemised_adjustments.append(
             {

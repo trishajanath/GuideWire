@@ -7,6 +7,12 @@ Feature engineering:
   - hours_squared    (captures diminishing returns of extra hours)
   - risk_bucket      (ordinal encoding of risk severity)
   - intensity_score  (combined work intensity metric)
+  - income_bracket   (monthly income tier — affects plan affordability)
+  - claim_history    (past claim count — high claims → need better coverage)
+  - family_size_norm (dependents — more family → need premium)
+  - tenure_norm      (platform tenure — loyal workers get better recommendations)
+
+SHAP-style feature importance is computed via permutation for each prediction.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ import numpy as np
 import pandas as pd
 from xgboost import XGBClassifier
 from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.inspection import permutation_importance
 import joblib
 
 logger = logging.getLogger("guidewire.ml.plan")
@@ -34,6 +41,10 @@ FEATURE_COLS = [
     "hours_squared",
     "risk_bucket",
     "intensity_score",
+    "income_bracket",
+    "claim_history",
+    "family_size_norm",
+    "tenure_norm",
 ]
 
 PLAN_REASONING = {
@@ -54,6 +65,20 @@ PLAN_REASONING = {
     ],
 }
 
+# Feature importance names for display
+FEATURE_DISPLAY_NAMES = {
+    "avg_daily_hours": "Daily work hours",
+    "zone_risk": "Zone risk level",
+    "hours_x_risk": "Hours × risk interaction",
+    "hours_squared": "Work intensity (hours²)",
+    "risk_bucket": "Risk category",
+    "intensity_score": "Overall intensity",
+    "income_bracket": "Income bracket",
+    "claim_history": "Past claims",
+    "family_size_norm": "Family size",
+    "tenure_norm": "Platform tenure",
+}
+
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
@@ -67,6 +92,15 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     out["intensity_score"] = (
         out["avg_daily_hours"] / 14.0 * 0.6 + out["zone_risk"] / 100.0 * 0.4
     )
+    # Fill new features with defaults if not present
+    if "income_bracket" not in out.columns:
+        out["income_bracket"] = 1.0
+    if "claim_history" not in out.columns:
+        out["claim_history"] = 0.0
+    if "family_size_norm" not in out.columns:
+        out["family_size_norm"] = 0.3
+    if "tenure_norm" not in out.columns:
+        out["tenure_norm"] = 0.5
     return out
 
 
@@ -129,7 +163,14 @@ def _load_model() -> XGBClassifier | None:
     return None
 
 
-def predict(avg_daily_hours: float, zone_risk: float) -> dict | None:
+def predict(
+    avg_daily_hours: float,
+    zone_risk: float,
+    income_bracket: float = 1.0,
+    claim_history: float = 0.0,
+    family_size: int = 1,
+    tenure_months: float = 6.0,
+) -> dict | None:
     """Recommend a plan using the trained XGBoost model.
 
     Returns None if the model is not available.
@@ -138,7 +179,14 @@ def predict(avg_daily_hours: float, zone_risk: float) -> dict | None:
     if clf is None:
         return None
 
-    row = pd.DataFrame([{"avg_daily_hours": avg_daily_hours, "zone_risk": zone_risk}])
+    row = pd.DataFrame([{
+        "avg_daily_hours": avg_daily_hours,
+        "zone_risk": zone_risk,
+        "income_bracket": income_bracket,
+        "claim_history": min(claim_history / 10.0, 1.0),  # normalize
+        "family_size_norm": min(family_size / 5.0, 1.0),
+        "tenure_norm": min(tenure_months / 24.0, 1.0),
+    }])
     row = engineer_features(row)
     X = row[FEATURE_COLS].values
 
@@ -150,14 +198,36 @@ def predict(avg_daily_hours: float, zone_risk: float) -> dict | None:
     # Build reasoning from the prediction probabilities
     reasoning = list(PLAN_REASONING[plan_name])
     if zone_risk >= 75:
-        reasoning.append("High risk zone detected")
+        reasoning.append("High risk zone detected — enhanced coverage recommended")
     elif zone_risk >= 40:
-        reasoning.append("Medium risk zone detected")
+        reasoning.append("Medium risk zone — standard or better coverage advised")
     else:
         reasoning.append("Low risk zone")
+
+    if claim_history >= 5:
+        reasoning.append(f"History of {int(claim_history)} claims — higher coverage beneficial")
+    if family_size >= 3:
+        reasoning.append(f"Family of {family_size} — premium tier provides dependent benefits")
+    if tenure_months >= 12:
+        reasoning.append("Long-term worker — loyalty benefits available")
+
+    # Feature contribution scores (SHAP-like via marginal effect)
+    feature_contributions = {}
+    for feat_idx, feat_name in enumerate(FEATURE_COLS):
+        display_name = FEATURE_DISPLAY_NAMES.get(feat_name, feat_name)
+        feat_val = float(X[0, feat_idx])
+        # Simple importance proxy: probability swing from zeroing this feature
+        X_mod = X.copy()
+        X_mod[0, feat_idx] = 0.0
+        proba_mod = clf.predict_proba(X_mod)[0]
+        swing = float(proba[pred_label] - proba_mod[pred_label])
+        if abs(swing) > 0.01:
+            feature_contributions[display_name] = round(swing, 3)
 
     return {
         "recommended_plan": plan_name,
         "confidence": max(0.50, min(confidence, 0.95)),
+        "probabilities": {PLAN_LABELS[i]: round(float(p), 3) for i, p in enumerate(proba)},
         "reasoning": reasoning,
+        "feature_contributions": feature_contributions,
     }

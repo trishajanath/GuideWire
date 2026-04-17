@@ -156,19 +156,32 @@ def generate_plan_recommendation_data(n_samples: int = 5000, seed: int = 42) -> 
 
     Labels: 0 = basic, 1 = standard, 2 = premium
     Features aligned with README: avg_daily_hours, zone_risk, plus
-    engineered interaction features.
+    engineered interaction features and worker profile features.
     """
     rng = np.random.default_rng(seed)
 
     hours = rng.uniform(1, 14, size=n_samples)
     zone_risk = rng.uniform(0, 100, size=n_samples)
+    income_bracket = rng.choice([0, 1, 2], size=n_samples, p=[0.3, 0.5, 0.2]).astype(float)
+    claim_history = rng.poisson(lam=2, size=n_samples).clip(0, 10).astype(float) / 10.0
+    family_size_norm = rng.uniform(0.2, 1.0, size=n_samples)
+    tenure_norm = rng.uniform(0, 1.0, size=n_samples)
 
-    # Derive noisy labels consistent with README logic
+    # Derive noisy labels consistent with README logic + new features
     labels = np.zeros(n_samples, dtype=int)
 
     for i in range(n_samples):
         h, z = hours[i], zone_risk[i]
-        score = h * 0.5 + z * 0.04 + rng.normal(0, 0.8)
+        inc, cl, fam, ten = income_bracket[i], claim_history[i], family_size_norm[i], tenure_norm[i]
+        score = (
+            h * 0.4
+            + z * 0.03
+            + inc * 0.8
+            + cl * 2.0       # more past claims → need better plan
+            + fam * 1.5      # bigger family → premium
+            + ten * 0.5      # tenure nudges up
+            + rng.normal(0, 0.8)
+        )
 
         if score > 6.5:
             labels[i] = 2  # premium
@@ -187,10 +200,19 @@ def generate_plan_recommendation_data(n_samples: int = 5000, seed: int = 42) -> 
             if rng.random() < 0.7:
                 labels[i] = 1
 
+        # Low income bracket shouldn't be pushed to premium
+        if inc == 0 and labels[i] == 2:
+            if rng.random() < 0.5:
+                labels[i] = 1
+
     df = pd.DataFrame(
         {
             "avg_daily_hours": np.round(hours, 1),
             "zone_risk": np.round(zone_risk, 1),
+            "income_bracket": income_bracket,
+            "claim_history": np.round(claim_history, 2),
+            "family_size_norm": np.round(family_size_norm, 2),
+            "tenure_norm": np.round(tenure_norm, 2),
             "label": labels,
         }
     )

@@ -217,6 +217,9 @@ const buildMockClaimResult = (params: {
         payout: fired
           ? {
               hours_lost: params.hoursLost,
+              adjusted_hours: params.hoursLost,
+              coverage_hour_adjustment: 0,
+              adjustment_reason: "none",
               hourly_rate: 100,
               severity_multiplier: meta.severity,
               daily_cap: 800,
@@ -476,6 +479,24 @@ const TriggerAlert = () => {
       /* ignore */
     } finally {
       setClaiming(false);
+    }
+  };
+
+  const handleDesktopClaimResult = (res: ClaimEvaluateResult, txn: PayoutTransaction | null) => {
+    // Push result from desktop panels (TriggerLab / FraudDemo) to the phone screen
+    setClaimResult(res);
+    setPayoutTxn(txn ?? null);
+    setClaiming(false);
+    setAutoClaimed(true);
+    setGeneratedAlerts([]);
+    setGeneratedSeed(Date.now());
+
+    // Derive trigger state from the claim result
+    const fired = res.trigger_list?.find((t) => t.fired);
+    if (fired) {
+      setTrigger({ trigger: true, type: fired.name, severity: fired.severity_multiplier });
+    } else {
+      setTrigger({ trigger: true, type: res.demo_scenario_applied ?? "simulation", severity: 1 });
     }
   };
 
@@ -875,10 +896,10 @@ const TriggerAlert = () => {
               <TabsTrigger value="spoof-sim">Fraud Spoof</TabsTrigger>
             </TabsList>
             <TabsContent value="trigger-lab" className="mt-4">
-              <TriggerLab workerId={userId} zoneId={zoneId} city={city} />
+              <TriggerLab workerId={userId} zoneId={zoneId} city={city} onClaimResult={handleDesktopClaimResult} />
             </TabsContent>
             <TabsContent value="spoof-sim" className="mt-4">
-              <FraudDemo workerId={userId} zoneId={zoneId} city={city} />
+              <FraudDemo workerId={userId} zoneId={zoneId} city={city} onClaimResult={handleDesktopClaimResult} />
             </TabsContent>
           </Tabs>
         </div>

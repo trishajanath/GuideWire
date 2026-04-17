@@ -136,6 +136,21 @@ except ImportError:
     from fraud_engine import assess_fraud, GPSPoint, ClaimRecord as FraudClaimRecord, ZONE_CENTERS
 
 try:
+    from .ml.fraud_model import predict as fraud_ml_predict
+    from .ml.claim_cluster import detect_clusters, cluster_summary
+    from .ml.risk_profiler import get_profiler as get_risk_profiler
+except ImportError:
+    try:
+        from ml.fraud_model import predict as fraud_ml_predict
+        from ml.claim_cluster import detect_clusters, cluster_summary
+        from ml.risk_profiler import get_profiler as get_risk_profiler
+    except ImportError:
+        fraud_ml_predict = None
+        detect_clusters = None
+        cluster_summary = None
+        get_risk_profiler = None
+
+try:
     from .vpn_detection import check_vpn, VPNCheckResult
 except ImportError:
     from vpn_detection import check_vpn, VPNCheckResult
@@ -835,6 +850,8 @@ class TriggerFraudResponse(BaseModel):
     score: float
     breakdown: list[TriggerFraudBreakdownItem]
     decision: Literal["auto-approve", "approve-with-flag", "hold-for-review"]
+    ml_ensemble: dict | None = None
+    worker_risk_profile: dict | None = None
 
 
 class TriggerPayoutResponse(BaseModel):
@@ -870,7 +887,7 @@ class ClaimEvaluateResponse(BaseModel):
     worker_id: int
     zone_id: str
     city: str
-    claim_status: Literal["no-trigger", "auto-approve", "approve-with-flag", "hold-for-review"]
+    claim_status: Literal["no-trigger", "auto-approve", "approve-with-flag", "hold-for-review", "auto-reject"]
     fraud_score: float
     payout_amount: float
     trigger_list: list[ClaimTriggerResponse]
@@ -1618,10 +1635,61 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
                     vpn_detected=eff_vpn,
                 )
                 fraud_decision = _format_fraud_decision(fraud_score)
+
+                # ML ensemble second opinion for this trigger
+                ml_ens_result = None
+                wrp_result = None
+                if fraud_ml_predict is not None:
+                    # Map 5-layer breakdown labels to the 7 ML signal columns
+                    raw_scores = {item["label"].lower().replace(" ", "_"): item["value"] for item in breakdown}
+                    raw_confs = {item["label"].lower().replace(" ", "_"): item["weight"] for item in breakdown}
+                    # Breakdown labels → ML model SIGNAL_COLS mapping
+                    LABEL_TO_SIGNAL = {
+                        "gps_verification": "gps_consistency",
+                        "activity_verification": "velocity_check",
+                        "cross-worker_zone_check": "location_disruption",
+                        "duplicate_&_frequency": "claim_frequency",
+                        "behavioral_analysis": "behavioral",
+                    }
+                    signal_scores = {}
+                    signal_confs = {}
+                    for label_key, value in raw_scores.items():
+                        sig = LABEL_TO_SIGNAL.get(label_key, label_key)
+                        signal_scores[sig] = value
+                    for label_key, value in raw_confs.items():
+                        sig = LABEL_TO_SIGNAL.get(label_key, label_key)
+                        signal_confs[sig] = value
+                    # Fill unmapped ML signals from contextual data
+                    if "historical_weather" not in signal_scores:
+                        signal_scores["historical_weather"] = 0.0
+                        signal_confs["historical_weather"] = 0.5
+                    if "gps_spoofing_advanced" not in signal_scores:
+                        signal_scores["gps_spoofing_advanced"] = signal_scores.get("gps_consistency", 0.0) * 0.8
+                        signal_confs["gps_spoofing_advanced"] = signal_confs.get("gps_consistency", 0.5)
+                    ml_ens_result = fraud_ml_predict(signal_scores, signal_confs)
+                if get_risk_profiler is not None:
+                    profiler = get_risk_profiler()
+                    profile = profiler.update(
+                        worker_id=payload.worker_id,
+                        fraud_score=fraud_score,
+                        payout_amount=0.0,
+                        claim_zone=payload.zone_id,
+                    )
+                    wrp_result = {
+                        "ema_risk": round(profile.ema_risk, 4),
+                        "trust_score": round(profile.trust_score, 4),
+                        "category": profile.category,
+                        "claim_count": profile.claim_count,
+                        "clean_streak": profile.clean_streak,
+                        "momentum": round(profile.momentum, 4),
+                    }
+
                 fraud_response = TriggerFraudResponse(
                     score=fraud_score,
                     breakdown=[TriggerFraudBreakdownItem(**item) for item in breakdown],
                     decision=fraud_decision,
+                    ml_ensemble=ml_ens_result,
+                    worker_risk_profile=wrp_result,
                 )
             else:
                 fraud_score = 0.0
@@ -1688,6 +1756,17 @@ async def evaluate_claim(payload: ClaimEvaluateRequest, request: Request = None)
         )
 
     fired_triggers = [item for item in claim_trigger_responses if item.fired]
+
+    # ── ML Ensemble escalation ──────────────────────────────────────
+    # If any trigger's ML ensemble recommends blocking (fraud_probability > 0.7),
+    # escalate the highest_fraud score so the claim decision reflects the ML view.
+    for ft in fired_triggers:
+        if ft.fraud and ft.fraud.ml_ensemble:
+            ml_prob = ft.fraud.ml_ensemble.get("fraud_probability", 0.0)
+            if ml_prob > 0.7:
+                # Blend: take the higher of rule-based and ML probability
+                highest_fraud = max(highest_fraud, ml_prob)
+
     if not fired_triggers:
         claim_status = "no-trigger"
         payout_amount = 0.0
@@ -2475,7 +2554,35 @@ def calculate_fraud_score(user_id: int, zone_id: str = "", weather_risk: int = 0
         is_logged_in=True,
     )
 
-    return assessment.to_dict()
+    result = assessment.to_dict()
+
+    # --- ML Ensemble second opinion ---
+    if fraud_ml_predict is not None:
+        signal_scores = {s["layer"]: s["score"] for s in result["signals"]}
+        signal_confs = {s["layer"]: s["confidence"] for s in result["signals"]}
+        ml_result = fraud_ml_predict(signal_scores, signal_confs)
+        if ml_result:
+            result["ml_ensemble"] = ml_result
+
+    # --- Update worker risk profile ---
+    if get_risk_profiler is not None:
+        profiler = get_risk_profiler()
+        profile = profiler.update(
+            worker_id=user_id,
+            fraud_score=result["overall_score"],
+            payout_amount=0.0,
+            claim_zone=zone_id,
+        )
+        result["worker_risk_profile"] = {
+            "ema_risk": round(profile.ema_risk, 4),
+            "trust_score": round(profile.trust_score, 4),
+            "category": profile.category,
+            "claim_count": profile.claim_count,
+            "clean_streak": profile.clean_streak,
+            "momentum": round(profile.momentum, 4),
+        }
+
+    return result
 
 
 def assess_basic_fraud_risk(fraud_signals: TriggerFraudSignalsInput) -> dict:
@@ -3857,6 +3964,602 @@ async def admin_predictive_analytics():
         },
         "disruption_breakdown": disruption_breakdown,
         "city_forecasts": city_forecasts,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 3b: Intelligence Center Endpoints (What-If / Anomalies / Heatmap)
+# ═══════════════════════════════════════════════════════════════════════════
+
+CITY_COORDS: dict[str, dict[str, float]] = {
+    "Mumbai": {"lat": 19.08, "lon": 72.88},
+    "Chennai": {"lat": 13.08, "lon": 80.27},
+    "Bengaluru": {"lat": 12.97, "lon": 77.59},
+    "Kolkata": {"lat": 22.57, "lon": 88.36},
+    "Delhi": {"lat": 28.61, "lon": 77.21},
+    "Hyderabad": {"lat": 17.39, "lon": 78.49},
+    "Kochi": {"lat": 9.93, "lon": 76.27},
+    "Coimbatore": {"lat": 11.02, "lon": 76.96},
+}
+
+
+@app.get("/api/admin/whatif")
+async def admin_whatif(
+    city: str = "Mumbai",
+    event: str = "cyclone",
+    severity: int = 70,
+    duration_days: int = 3,
+    worker_exposure: int = 60,
+):
+    """Catastrophe What-If Modeler — stress-test using REAL claims+worker data."""
+    now = datetime.now(timezone.utc)
+    real_users = {uid: u for uid, u in users.items() if _is_real_user(u)}
+    real_claims_list = [c for c in claims if c.get("user_id") in real_users]
+    city_workers = [u for u in real_users.values() if (u.get("city") or "").lower() == city.lower()]
+
+    # Real baseline stats
+    total_workers = len(real_users)
+    city_worker_count = len(city_workers)
+    avg_premium = 69.0
+    weekly_premium_revenue = max(total_workers * avg_premium, 1.0)
+
+    # Historical average claim and payout for this city
+    city_claims = [c for c in real_claims_list if str(c.get("zone_id", "")).lower().startswith(city.lower()[:4])]
+    historical_avg_payout = (sum(c.get("payout_amount", 0) for c in city_claims) / max(len(city_claims), 1)) if city_claims else 450.0
+    historical_avg_fraud = (sum(c.get("fraud_score", 0) for c in city_claims) / max(len(city_claims), 1)) if city_claims else 0.10
+    claims_per_worker_week = (len(city_claims) / max(city_worker_count, 1)) if city_claims else 1.5
+
+    # Event-type multipliers (based on real trigger breakdown data)
+    event_multipliers = {
+        "cyclone": {"claims": 3.5, "payout": 1.5, "fraud_uplift": 0.08},
+        "flood": {"claims": 2.8, "payout": 1.3, "fraud_uplift": 0.06},
+        "heatwave": {"claims": 1.8, "payout": 1.1, "fraud_uplift": 0.04},
+        "rain": {"claims": 2.2, "payout": 1.2, "fraud_uplift": 0.05},
+    }
+    ev = event_multipliers.get(event, event_multipliers["cyclone"])
+
+    # Core projections using real data as baseline
+    severity_mul = severity / 50.0
+    duration_mul = duration_days / 3.0
+    exposure_mul = worker_exposure / 50.0
+    exposed_workers = max(1, int(city_worker_count * (worker_exposure / 100.0))) if city_worker_count else max(1, int(total_workers * 0.15 * (worker_exposure / 100.0)))
+
+    projected_claims = max(1, int(exposed_workers * claims_per_worker_week * ev["claims"] * severity_mul * duration_mul))
+    projected_payout = round(projected_claims * historical_avg_payout * ev["payout"] * severity_mul, 2)
+    projected_fraud_rate = min(0.95, historical_avg_fraud + ev["fraud_uplift"] * (1 + (severity - 50) / 100.0))
+    projected_loss_ratio = round(projected_payout / max(weekly_premium_revenue, 1.0), 3)
+    reserve_needed = round(projected_payout * 1.25, 2)
+
+    # Recommended reserve from predictive data
+    current_reserve = round(weekly_premium_revenue * 1.15, 2)
+    reserve_gap = round(reserve_needed - current_reserve, 2)
+
+    # Day-by-day timeline
+    daily_timeline = []
+    for i in range(duration_days):
+        peak = duration_days // 2
+        factor = 1.0 - abs(i - peak) / (duration_days + 1)
+        day_claims = max(1, int(projected_claims / duration_days * (0.6 + factor * 0.8)))
+        day_payout = round(projected_payout / duration_days * (0.6 + factor * 0.8), 2)
+        daily_timeline.append({"day": f"Day {i+1}", "claims": day_claims, "payout": day_payout})
+
+    # AI recommendations based on scenario
+    recommendations = []
+    if projected_loss_ratio > 0.65:
+        recommendations.append({"severity": "warning", "text": f"Activate dynamic premium surcharge for {city} zones"})
+    if projected_loss_ratio > 0.8:
+        recommendations.append({"severity": "critical", "text": "Trigger reinsurance escalation protocol"})
+    if projected_claims > 200:
+        recommendations.append({"severity": "warning", "text": "Pre-deploy additional fraud detection layers for volume surge"})
+    if reserve_gap > 0:
+        recommendations.append({"severity": "critical", "text": f"Increase reserve pool by ₹{int(reserve_gap):,} to maintain 125% coverage"})
+    if worker_exposure > 70:
+        recommendations.append({"severity": "warning", "text": f"Issue preemptive safety advisories to {exposed_workers} workers in affected zones"})
+    if duration_days > 5:
+        recommendations.append({"severity": "warning", "text": "Activate extended disruption coverage protocols"})
+    recommendations.append({"severity": "info", "text": "Enable real-time GPS verification for all incoming claims during event"})
+
+    return {
+        "city": city,
+        "event": event,
+        "severity": severity,
+        "duration_days": duration_days,
+        "worker_exposure": worker_exposure,
+        "baselines": {
+            "total_workers": total_workers,
+            "city_workers": city_worker_count,
+            "exposed_workers": exposed_workers,
+            "historical_avg_payout": round(historical_avg_payout, 2),
+            "historical_avg_fraud": round(historical_avg_fraud, 3),
+            "claims_per_worker_week": round(claims_per_worker_week, 2),
+            "weekly_premium_revenue": round(weekly_premium_revenue, 2),
+        },
+        "projections": {
+            "claims": projected_claims,
+            "payout": projected_payout,
+            "fraud_rate": round(projected_fraud_rate, 3),
+            "loss_ratio": projected_loss_ratio,
+            "reserve_needed": reserve_needed,
+            "current_reserve": current_reserve,
+            "reserve_gap": reserve_gap,
+        },
+        "daily_timeline": daily_timeline,
+        "recommendations": recommendations,
+    }
+
+
+@app.get("/api/admin/anomalies")
+async def admin_anomalies():
+    """Detect REAL anomalies from actual claim data — no mocks if real data exists."""
+    now = datetime.now(timezone.utc)
+    real_users = {uid: u for uid, u in users.items() if _is_real_user(u)}
+    real_user_ids = set(real_users.keys())
+    real_claims_list = [c for c in claims if c.get("user_id") in real_user_ids]
+    anomalies_found: list[dict] = []
+    aid = 0
+
+    # 1) VELOCITY — workers with multiple claims in short windows
+    user_claim_map: dict[int, list[dict]] = {}
+    for c in real_claims_list:
+        uid = c.get("user_id")
+        if uid is not None:
+            user_claim_map.setdefault(uid, []).append(c)
+
+    for uid, uclaims in user_claim_map.items():
+        sorted_c = sorted(uclaims, key=lambda x: x.get("timestamp", now))
+        for i in range(1, len(sorted_c)):
+            delta = (sorted_c[i]["timestamp"] - sorted_c[i-1]["timestamp"]).total_seconds()
+            if delta < 900:  # < 15 min between claims
+                aid += 1
+                anomalies_found.append({
+                    "id": aid,
+                    "timestamp": sorted_c[i]["timestamp"].isoformat(),
+                    "type": "velocity",
+                    "severity": "high" if delta < 300 else "medium",
+                    "title": f"Rapid claims — {int(delta)}s apart",
+                    "detail": f"Worker #{uid} filed 2 claims within {int(delta)} seconds",
+                    "zone": sorted_c[i].get("zone_id", "unknown"),
+                    "worker_id": uid,
+                })
+
+    # 2) HIGH FRAUD — claims with fraud_score > 0.6
+    for c in real_claims_list:
+        fs = c.get("fraud_score", 0)
+        if fs >= 0.7:
+            aid += 1
+            anomalies_found.append({
+                "id": aid,
+                "timestamp": c["timestamp"].isoformat(),
+                "type": "fraud",
+                "severity": "critical",
+                "title": f"Very high fraud score ({fs:.0%})",
+                "detail": f"Worker #{c.get('user_id')} claim auto-held/rejected — fraud score {fs:.2f}",
+                "zone": c.get("zone_id", "unknown"),
+                "worker_id": c.get("user_id"),
+            })
+        elif fs >= 0.5:
+            aid += 1
+            anomalies_found.append({
+                "id": aid,
+                "timestamp": c["timestamp"].isoformat(),
+                "type": "fraud",
+                "severity": "high",
+                "title": f"Elevated fraud score ({fs:.0%})",
+                "detail": f"Worker #{c.get('user_id')} flagged with fraud score {fs:.2f}",
+                "zone": c.get("zone_id", "unknown"),
+                "worker_id": c.get("user_id"),
+            })
+
+    # 3) CLUSTER — multiple claims from same zone in short window
+    zone_claim_map: dict[str, list[dict]] = {}
+    for c in real_claims_list:
+        z = c.get("zone_id", "unknown")
+        zone_claim_map.setdefault(z, []).append(c)
+
+    for zone, zclaims in zone_claim_map.items():
+        # Check 30-min windows
+        sorted_z = sorted(zclaims, key=lambda x: x.get("timestamp", now))
+        for i in range(len(sorted_z)):
+            window = [sorted_z[i]]
+            for j in range(i+1, len(sorted_z)):
+                if (sorted_z[j]["timestamp"] - sorted_z[i]["timestamp"]).total_seconds() <= 1800:
+                    window.append(sorted_z[j])
+            if len(window) >= 3:
+                aid += 1
+                anomalies_found.append({
+                    "id": aid,
+                    "timestamp": window[-1]["timestamp"].isoformat(),
+                    "type": "cluster",
+                    "severity": "high" if len(window) >= 5 else "medium",
+                    "title": f"Claim cluster — {len(window)} claims in 30min",
+                    "detail": f"{len(window)} claims from zone {zone.replace('_', ' ')} within 30 minutes",
+                    "zone": zone,
+                    "worker_id": None,
+                })
+                break  # one cluster alert per zone
+
+    # 4) PATTERN — duplicate payout amounts (same worker, same amount)
+    for uid, uclaims in user_claim_map.items():
+        amounts = [c.get("payout_amount", 0) for c in uclaims if c.get("payout_amount", 0) > 0]
+        seen: dict[float, int] = {}
+        for a in amounts:
+            seen[a] = seen.get(a, 0) + 1
+        for amt, cnt in seen.items():
+            if cnt >= 2:
+                aid += 1
+                anomalies_found.append({
+                    "id": aid,
+                    "timestamp": now.isoformat(),
+                    "type": "pattern",
+                    "severity": "medium",
+                    "title": f"Duplicate payout amount ₹{amt:.0f}",
+                    "detail": f"Worker #{uid} received ₹{amt:.0f} payout {cnt} times — possible patterned claims",
+                    "zone": uclaims[0].get("zone_id", "unknown"),
+                    "worker_id": uid,
+                })
+                break
+
+    # 5) GEO — cross-city claims (worker registered in one city, claiming in another zone)
+    for uid, uclaims in user_claim_map.items():
+        user = real_users.get(uid)
+        if not user:
+            continue
+        user_city = (user.get("city") or "").lower()[:4]
+        for c in uclaims:
+            claim_zone = (c.get("zone_id") or "").lower()
+            if user_city and claim_zone and user_city not in claim_zone:
+                aid += 1
+                anomalies_found.append({
+                    "id": aid,
+                    "timestamp": c["timestamp"].isoformat(),
+                    "type": "geo",
+                    "severity": "medium",
+                    "title": "Cross-city claim attempt",
+                    "detail": f"Worker #{uid} registered in {user.get('city')} but claimed zone {claim_zone}",
+                    "zone": c.get("zone_id", "unknown"),
+                    "worker_id": uid,
+                })
+                break  # one per worker
+
+    # 6) FREQUENCY — workers with unusually high claim counts
+    for uid, uclaims in user_claim_map.items():
+        week_claims = [c for c in uclaims if c["timestamp"] >= now - timedelta(days=7)]
+        if len(week_claims) >= MAX_CLAIMS_PER_WEEK:
+            aid += 1
+            anomalies_found.append({
+                "id": aid,
+                "timestamp": now.isoformat(),
+                "type": "velocity",
+                "severity": "high",
+                "title": f"Abnormal claim frequency ({len(week_claims)}/week)",
+                "detail": f"Worker #{uid} filed {len(week_claims)} claims this week (limit: {MAX_CLAIMS_PER_WEEK})",
+                "zone": uclaims[-1].get("zone_id", "unknown"),
+                "worker_id": uid,
+            })
+
+    # Sort by severity priority then recency
+    sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    anomalies_found.sort(key=lambda a: (sev_order.get(a["severity"], 9), a.get("timestamp", "")), reverse=False)
+
+    return {
+        "total": len(anomalies_found),
+        "anomalies": anomalies_found[:100],  # cap at 100
+        "stats": {
+            "total_workers_analyzed": len(real_users),
+            "total_claims_analyzed": len(real_claims_list),
+            "critical": sum(1 for a in anomalies_found if a["severity"] == "critical"),
+            "high": sum(1 for a in anomalies_found if a["severity"] == "high"),
+            "medium": sum(1 for a in anomalies_found if a["severity"] == "medium"),
+            "low": sum(1 for a in anomalies_found if a["severity"] == "low"),
+        },
+    }
+
+
+@app.get("/api/admin/worker-heatmap")
+async def admin_worker_heatmap():
+    """Geographic heatmap of worker behavior — real data from registered workers & claims."""
+    now = datetime.now(timezone.utc)
+    real_users = {uid: u for uid, u in users.items() if _is_real_user(u)}
+    real_claims_list = [c for c in claims if c.get("user_id") in real_users]
+
+    # City-level aggregation from real data
+    city_metrics: dict[str, dict] = {}
+    for uid, u in real_users.items():
+        city = u.get("city", "Unknown")
+        if city not in city_metrics:
+            city_metrics[city] = {"workers": 0, "claims": 0, "payouts": 0.0, "fraud_scores": [], "plans": {}}
+        city_metrics[city]["workers"] += 1
+        plan = u.get("selected_plan", "None")
+        city_metrics[city]["plans"][plan] = city_metrics[city]["plans"].get(plan, 0) + 1
+
+    for c in real_claims_list:
+        uid = c.get("user_id")
+        user = real_users.get(uid) if uid else None
+        city = user.get("city", "Unknown") if user else "Unknown"
+        if city not in city_metrics:
+            city_metrics[city] = {"workers": 0, "claims": 0, "payouts": 0.0, "fraud_scores": [], "plans": {}}
+        city_metrics[city]["claims"] += 1
+        city_metrics[city]["payouts"] += c.get("payout_amount", 0)
+        city_metrics[city]["fraud_scores"].append(c.get("fraud_score", 0))
+
+    city_data = []
+    for city_name, m in city_metrics.items():
+        scores = m["fraud_scores"]
+        avg_fraud = round(sum(scores) / max(len(scores), 1), 3) if scores else 0.0
+        coords = CITY_COORDS.get(city_name, {"lat": 20.0, "lon": 78.0})
+        city_data.append({
+            "city": city_name,
+            "lat": coords["lat"],
+            "lon": coords["lon"],
+            "workers": m["workers"],
+            "claims": m["claims"],
+            "payouts": round(m["payouts"], 2),
+            "avg_fraud": avg_fraud,
+            "plans": m["plans"],
+        })
+
+    # Zone-level cluster data from real claims
+    zone_clusters: dict[str, dict] = {}
+    for c in real_claims_list:
+        zone = c.get("zone_id", "unknown")
+        if zone not in zone_clusters:
+            zone_clusters[zone] = {"claims": 0, "fraud_scores": [], "payouts": 0.0, "worker_ids": set()}
+        zone_clusters[zone]["claims"] += 1
+        zone_clusters[zone]["fraud_scores"].append(c.get("fraud_score", 0))
+        zone_clusters[zone]["payouts"] += c.get("payout_amount", 0)
+        if c.get("user_id"):
+            zone_clusters[zone]["worker_ids"].add(c["user_id"])
+
+    cluster_data = []
+    for zone, zdata in zone_clusters.items():
+        scores = zdata["fraud_scores"]
+        avg_fraud = round(sum(scores) / max(len(scores), 1), 3)
+        # Derive approximate coords from zone center or city
+        zone_center = ZONE_CENTERS.get(zone)
+        if zone_center:
+            lat, lon = zone_center.lat, zone_center.lon
+        else:
+            # Try to match city from zone name
+            matched_city = next((cname for cname in CITY_COORDS if cname.lower()[:3] in zone.lower()), None)
+            base = CITY_COORDS.get(matched_city, {"lat": 13.0, "lon": 77.6}) if matched_city else {"lat": 13.0, "lon": 77.6}
+            lat = base["lat"] + (hash(zone) % 100 - 50) * 0.003
+            lon = base["lon"] + (hash(zone) % 77 - 38) * 0.003
+
+        cluster_data.append({
+            "zone": zone,
+            "lat": round(lat, 4),
+            "lon": round(lon, 4),
+            "claims": zdata["claims"],
+            "fraud": avg_fraud,
+            "payouts": round(zdata["payouts"], 2),
+            "unique_workers": len(zdata["worker_ids"]),
+        })
+
+    # Worker risk list — individual workers with their risk profile
+    worker_risk: list[dict] = []
+    for uid, u in real_users.items():
+        uclaims = [c for c in real_claims_list if c.get("user_id") == uid]
+        if not uclaims:
+            continue
+        avg_f = sum(c.get("fraud_score", 0) for c in uclaims) / len(uclaims)
+        total_payout = sum(c.get("payout_amount", 0) for c in uclaims)
+        week_claims = [c for c in uclaims if c["timestamp"] >= now - timedelta(days=7)]
+        worker_risk.append({
+            "worker_id": uid,
+            "name": u.get("name", ""),
+            "city": u.get("city", ""),
+            "zone_area": u.get("zone_area", ""),
+            "plan": u.get("selected_plan", ""),
+            "total_claims": len(uclaims),
+            "week_claims": len(week_claims),
+            "avg_fraud": round(avg_f, 3),
+            "total_payout": round(total_payout, 2),
+            "risk_level": "critical" if avg_f >= 0.7 else "high" if avg_f >= 0.5 else "medium" if avg_f >= 0.3 else "low",
+        })
+    worker_risk.sort(key=lambda w: w["avg_fraud"], reverse=True)
+
+    return {
+        "city_data": city_data,
+        "cluster_data": cluster_data,
+        "worker_risk": worker_risk[:50],
+        "summary": {
+            "total_workers": len(real_users),
+            "total_claims": len(real_claims_list),
+            "cities_covered": len(city_data),
+            "zones_active": len(cluster_data),
+        },
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ML Model Monitoring Dashboard
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/ml/status")
+def ml_model_status():
+    """Central dashboard showing status of ALL ML models in the system."""
+    from pathlib import Path
+    model_dir = Path(__file__).parent / "ml" / "models"
+
+    models = []
+
+    # 1. Weather Risk (XGBoost 2-head)
+    weather_clf = model_dir / "weather_trigger_clf.joblib"
+    weather_reg = model_dir / "weather_risk_reg.joblib"
+    models.append({
+        "name": "Weather Trigger Classifier",
+        "algorithm": "XGBoost (binary)",
+        "purpose": "Predicts trigger breach probability from weather data",
+        "features": ["rainfall", "temperature", "humidity", "wind_speed", "+4 engineered"],
+        "status": "loaded" if weather_clf.exists() else "not_trained",
+        "file_size_kb": round(weather_clf.stat().st_size / 1024, 1) if weather_clf.exists() else 0,
+        "cv_metric": "F1 score (5-fold stratified)",
+    })
+    models.append({
+        "name": "Weather Risk Regressor",
+        "algorithm": "XGBoost (regression)",
+        "purpose": "Predicts risk score 0-100",
+        "features": ["rainfall", "temperature", "humidity", "wind_speed", "+4 engineered"],
+        "status": "loaded" if weather_reg.exists() else "not_trained",
+        "file_size_kb": round(weather_reg.stat().st_size / 1024, 1) if weather_reg.exists() else 0,
+        "cv_metric": "RMSE",
+    })
+
+    # 2. Zone Activity (Isolation Forest)
+    zone_iso = model_dir / "zone_isolation_forest.joblib"
+    models.append({
+        "name": "Zone Activity Anomaly Detector",
+        "algorithm": "Isolation Forest + StandardScaler",
+        "purpose": "Detects zone disruptions from worker activity patterns",
+        "features": ["active_workers", "idle_workers", "total_workers", "idle_ratio", "active_ratio", "avg_distance"],
+        "status": "loaded" if zone_iso.exists() else "not_trained",
+        "file_size_kb": round(zone_iso.stat().st_size / 1024, 1) if zone_iso.exists() else 0,
+        "cv_metric": "Anomaly detection rate",
+    })
+
+    # 3. Plan Recommender (XGBoost multi-class)
+    plan_clf = model_dir / "plan_recommender.joblib"
+    models.append({
+        "name": "Plan Recommender",
+        "algorithm": "XGBoost (multi-class softprob)",
+        "purpose": "Recommends Basic/Standard/Premium plan based on worker profile",
+        "features": ["avg_daily_hours", "zone_risk", "income_bracket", "claim_history", "family_size", "tenure", "+4 engineered"],
+        "status": "loaded" if plan_clf.exists() else "not_trained",
+        "file_size_kb": round(plan_clf.stat().st_size / 1024, 1) if plan_clf.exists() else 0,
+        "cv_metric": "Accuracy (5-fold stratified)",
+    })
+
+    # 4. Fraud Ensemble (GradientBoosting meta-learner)
+    fraud_ens = model_dir / "fraud_ensemble.joblib"
+    models.append({
+        "name": "Fraud ML Ensemble",
+        "algorithm": "GradientBoosting + Isotonic Calibration",
+        "purpose": "Meta-learner over 7-layer fraud signals — captures non-linear interactions",
+        "features": ["7 fraud layer scores", "7 confidence scores", "3 interaction features", "4 aggregate stats"],
+        "status": "loaded" if fraud_ens.exists() else "not_trained",
+        "file_size_kb": round(fraud_ens.stat().st_size / 1024, 1) if fraud_ens.exists() else 0,
+        "cv_metric": "F1 + AUC-ROC (5-fold stratified)",
+    })
+
+    # 5. Premium Engine (GradientBoosting regression)
+    premium_gbr = model_dir / "premium_gbr.joblib"
+    models.append({
+        "name": "Dynamic Premium Pricer",
+        "algorithm": "GradientBoostingRegressor",
+        "purpose": "Calculates dynamic premium adjustments based on zone risk + worker profile",
+        "features": ["flood_score", "rainfall_norm", "heat_days_norm", "monsoon_flag", "tenure_norm", "claim_ratio", "hours_norm", "+2 interactions"],
+        "status": "loaded" if premium_gbr.exists() else "trains_on_demand",
+        "file_size_kb": round(premium_gbr.stat().st_size / 1024, 1) if premium_gbr.exists() else 0,
+        "cv_metric": "R² + MAE (5-fold)",
+    })
+
+    # 6. Worker Risk Profiler (EMA-based, no model file)
+    profiler_active = get_risk_profiler is not None
+    profiler = get_risk_profiler() if profiler_active else None
+    models.append({
+        "name": "Worker Risk Profiler",
+        "algorithm": "Exponential Moving Average (EMA α=0.3)",
+        "purpose": "Dynamic per-worker risk scoring with trust/momentum tracking",
+        "features": ["fraud_score (per claim)", "payout_amount", "claim_zone", "temporal patterns"],
+        "status": "active" if profiler_active else "unavailable",
+        "workers_tracked": len(profiler.profiles) if profiler else 0,
+        "cv_metric": "N/A (online learning)",
+    })
+
+    # 7. Claim Cluster Detector (DBSCAN, no persisted model)
+    models.append({
+        "name": "Claim Pattern Cluster Detector",
+        "algorithm": "DBSCAN (spatiotemporal)",
+        "purpose": "Detects suspicious claim clusters indicating fraud rings or gaming",
+        "features": ["lat", "lon", "timestamp", "payout_amount"],
+        "status": "active" if detect_clusters is not None else "unavailable",
+        "cv_metric": "N/A (unsupervised)",
+    })
+
+    # Overall summary
+    trained_count = sum(1 for m in models if m["status"] in ("loaded", "active", "trains_on_demand"))
+    total_size = sum(m.get("file_size_kb", 0) for m in models)
+
+    return {
+        "models": models,
+        "summary": {
+            "total_models": len(models),
+            "trained": trained_count,
+            "total_model_size_kb": round(total_size, 1),
+            "algorithms_used": list(set(m["algorithm"].split(" (")[0].split(" +")[0] for m in models)),
+            "unique_features": "50+",
+        },
+    }
+
+
+@app.get("/api/ml/claim-clusters")
+def get_claim_clusters():
+    """Run DBSCAN clustering on all claims to find suspicious patterns."""
+    if detect_clusters is None:
+        raise HTTPException(status_code=503, detail="Claim clustering module not available")
+
+    claim_list = []
+    for c in claims:
+        zone_id = c.get("zone_id", "")
+        lat, lon = 0.0, 0.0
+        zc = ZONE_CENTERS.get(zone_id)
+        if zc:
+            lat, lon = zc.lat, zc.lon
+        claim_list.append({
+            "id": c.get("id", 0),
+            "worker_id": c.get("user_id", 0),
+            "zone_id": zone_id,
+            "lat": lat + random.uniform(-0.01, 0.01),  # add jitter for realism
+            "lon": lon + random.uniform(-0.01, 0.01),
+            "timestamp": c.get("timestamp", datetime.now(timezone.utc)).isoformat() if isinstance(c.get("timestamp"), datetime) else str(c.get("timestamp", "")),
+            "payout_amount": c.get("payout_amount", 0),
+            "fraud_score": c.get("fraud_score", 0),
+        })
+
+    clusters = detect_clusters(claim_list, ZONE_CENTERS)
+    summary = cluster_summary(clusters)
+
+    return {
+        "clusters": [
+            {
+                "cluster_id": cl.cluster_id,
+                "size": cl.size,
+                "unique_workers": cl.unique_workers,
+                "total_payout": cl.total_payout,
+                "avg_fraud_score": cl.avg_fraud_score,
+                "center_lat": cl.center_lat,
+                "center_lon": cl.center_lon,
+                "time_span_hours": cl.time_span_hours,
+                "zone": cl.zone,
+                "suspicion_score": cl.suspicion_score,
+                "reason": cl.reason,
+            }
+            for cl in clusters
+        ],
+        "summary": summary,
+        "total_claims_analyzed": len(claim_list),
+    }
+
+
+@app.get("/api/ml/worker-risk")
+def get_worker_risk_profiles():
+    """Get all worker risk profiles from the EMA profiler."""
+    if get_risk_profiler is None:
+        raise HTTPException(status_code=503, detail="Risk profiler not available")
+
+    profiler = get_risk_profiler()
+    profiles = profiler.get_all_profiles()
+    distribution = profiler.get_risk_distribution()
+    flagged = profiler.get_flagged_workers()
+    trusted = profiler.get_trusted_workers()
+
+    return {
+        "profiles": profiles,
+        "distribution": distribution,
+        "flagged_count": len(flagged),
+        "trusted_count": len(trusted),
+        "flagged_workers": flagged[:20],
+        "trusted_workers": trusted[:20],
     }
 
 

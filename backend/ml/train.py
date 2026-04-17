@@ -24,7 +24,7 @@ from ml.data_generator import (
     generate_zone_activity_data,
     generate_plan_recommendation_data,
 )
-from ml import weather_model, zone_model, plan_model
+from ml import weather_model, zone_model, plan_model, fraud_model
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,6 +55,14 @@ def main() -> None:
     plan_df = generate_plan_recommendation_data(n_samples=5000)
     plan_metrics = plan_model.train(plan_df)
     logger.info("Plan metrics: %s", plan_metrics)
+
+    # 4. Fraud Ensemble (GradientBoosting meta-learner)
+    logger.info("--- Fraud Ensemble (GradientBoosting + calibrated) ---")
+    fraud_metrics = fraud_model.train()
+    logger.info("Fraud metrics: %s", {k: v for k, v in fraud_metrics.items() if k != "feature_importances"})
+    logger.info("Fraud top features: %s",
+        sorted(fraud_metrics.get("feature_importances", {}).items(), key=lambda x: x[1], reverse=True)[:5]
+    )
 
     logger.info("=" * 60)
     logger.info("All models trained and saved to ml/models/")

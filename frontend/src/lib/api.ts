@@ -446,6 +446,20 @@ export interface ClaimEvaluateTrigger {
       value: number;
       contribution: number;
     }>;
+    ml_ensemble?: {
+      fraud_probability: number;
+      risk_level: string;
+      allow_payout: boolean;
+      top_drivers: Array<{ feature: string; contribution: number }>;
+    };
+    worker_risk_profile?: {
+      ema_risk: number;
+      trust_score: number;
+      category: string;
+      claim_count: number;
+      clean_streak: number;
+      momentum: number;
+    };
   };
   payout?: {
     hours_lost: number;
@@ -666,6 +680,20 @@ export interface FraudAssessment {
   allow_payout: boolean;
   signals: FraudSignal[];
   explanation: string;
+  ml_ensemble?: {
+    fraud_probability: number;
+    risk_level: string;
+    allow_payout: boolean;
+    top_drivers: Array<{ feature: string; contribution: number }>;
+  };
+  worker_risk_profile?: {
+    ema_risk: number;
+    trust_score: number;
+    category: string;
+    claim_count: number;
+    clean_streak: number;
+    momentum: number;
+  };
 }
 
 export const assessFraud = (userId: number, zoneId: string = "") =>
@@ -879,3 +907,207 @@ export const simulateDisruption = (data: {
     method: "POST",
     body: JSON.stringify(data),
   });
+
+/* ---- What-If / Intelligence Center ---- */
+
+export interface WhatIfProjection {
+  city: string;
+  event: string;
+  severity: number;
+  duration_days: number;
+  worker_exposure: number;
+  baselines: {
+    total_workers: number;
+    city_workers: number;
+    exposed_workers: number;
+    historical_avg_payout: number;
+    historical_avg_fraud: number;
+    claims_per_worker_week: number;
+    weekly_premium_revenue: number;
+  };
+  projections: {
+    claims: number;
+    payout: number;
+    fraud_rate: number;
+    loss_ratio: number;
+    reserve_needed: number;
+    current_reserve: number;
+    reserve_gap: number;
+  };
+  daily_timeline: Array<{ day: string; claims: number; payout: number }>;
+  recommendations: Array<{ severity: string; text: string }>;
+}
+
+export const getWhatIfProjection = (params: {
+  city: string;
+  event: string;
+  severity: number;
+  duration_days: number;
+  worker_exposure: number;
+}) => {
+  const qs = new URLSearchParams({
+    city: params.city,
+    event: params.event,
+    severity: String(params.severity),
+    duration_days: String(params.duration_days),
+    worker_exposure: String(params.worker_exposure),
+  });
+  return request<WhatIfProjection>(`/api/admin/whatif?${qs}`);
+};
+
+export interface AnomalyEvent {
+  id: number;
+  timestamp: string;
+  type: "fraud" | "cluster" | "velocity" | "geo" | "pattern";
+  severity: "critical" | "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  zone: string;
+  worker_id?: number | null;
+}
+
+export interface AnomalyResponse {
+  total: number;
+  anomalies: AnomalyEvent[];
+  stats: {
+    total_workers_analyzed: number;
+    total_claims_analyzed: number;
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  };
+}
+
+export const getAnomalies = () =>
+  request<AnomalyResponse>("/api/admin/anomalies");
+
+export interface HeatmapCityData {
+  city: string;
+  lat: number;
+  lon: number;
+  workers: number;
+  claims: number;
+  payouts: number;
+  avg_fraud: number;
+  plans: Record<string, number>;
+}
+
+export interface HeatmapCluster {
+  zone: string;
+  lat: number;
+  lon: number;
+  claims: number;
+  fraud: number;
+  payouts: number;
+  unique_workers: number;
+}
+
+export interface WorkerRisk {
+  worker_id: number;
+  name: string;
+  city: string;
+  zone_area: string;
+  plan: string;
+  total_claims: number;
+  week_claims: number;
+  avg_fraud: number;
+  total_payout: number;
+  risk_level: "critical" | "high" | "medium" | "low";
+}
+
+export interface WorkerHeatmapResponse {
+  city_data: HeatmapCityData[];
+  cluster_data: HeatmapCluster[];
+  worker_risk: WorkerRisk[];
+  summary: {
+    total_workers: number;
+    total_claims: number;
+    cities_covered: number;
+    zones_active: number;
+  };
+}
+
+export const getWorkerHeatmap = () =>
+  request<WorkerHeatmapResponse>("/api/admin/worker-heatmap");
+
+/* ---- ML Model Monitoring ---- */
+
+export interface MLModelInfo {
+  name: string;
+  algorithm: string;
+  status: "loaded" | "not_loaded" | "error";
+  features: number;
+  file_size_kb: number | null;
+  last_trained: string | null;
+  metrics: Record<string, number>;
+}
+
+export interface MLStatusResponse {
+  models: MLModelInfo[];
+  total_models: number;
+  loaded_models: number;
+  system_health: string;
+}
+
+export const getMLStatus = () =>
+  request<MLStatusResponse>("/api/ml/status");
+
+/* ---- Claim Clusters ---- */
+
+export interface ClaimClusterItem {
+  cluster_id: number;
+  suspicion_score: number;
+  reason: string;
+  size: number;
+  unique_workers: number;
+  avg_fraud_score: number;
+  total_payout: number;
+  geographic_spread_km: number;
+  time_span_hours: number;
+  claims: Array<{
+    claim_id: string;
+    worker_id: string;
+    lat: number;
+    lon: number;
+    fraud_score: number;
+    payout: number;
+  }>;
+}
+
+export interface ClaimClustersResponse {
+  clusters: ClaimClusterItem[];
+  summary: {
+    total_claims_analyzed: number;
+    clusters_found: number;
+    suspicious_clusters: number;
+    highest_suspicion: number;
+  };
+}
+
+export const getClaimClusters = () =>
+  request<ClaimClustersResponse>("/api/ml/claim-clusters");
+
+/* ---- Worker Risk Profiles ---- */
+
+export interface WorkerRiskProfile {
+  worker_id: string;
+  ema_risk: number;
+  trust_score: number;
+  category: "trusted" | "normal" | "watch" | "flagged" | "blocked";
+  claim_count: number;
+  clean_streak: number;
+  momentum: number;
+  velocity: number;
+}
+
+export interface WorkerRiskResponse {
+  profiles: Record<string, WorkerRiskProfile>;
+  total_workers: number;
+  distribution: Record<string, number>;
+  flagged_workers: WorkerRiskProfile[];
+  trusted_workers: WorkerRiskProfile[];
+}
+
+export const getWorkerRiskProfiles = () =>
+  request<WorkerRiskResponse>("/api/ml/worker-risk");
